@@ -164,7 +164,7 @@ aws cloudformation wait stack-create-complete \
 
 ### Step 2. [Each Workload Account] Deploy the Collection Module
 
-Creates the collection bucket with replication, both Lambda functions, and both EventBridge rules.
+Creates the collection bucket with replication, the collector Lambda, and the EventBridge rule.
 
 ```bash
 DASHBOARD_ACCOUNT_ID=<your-dashboard-account-id>
@@ -214,7 +214,7 @@ After deployment, verify the pipeline works end-to-end:
 2. **Trigger an investigation** in the DevOps Agent console
 3. **Check S3** for the output file:
    ```bash
-   aws s3 ls s3://devops-agent-collection-${ACCOUNT_ID}/investigations-v2/ --recursive
+   aws s3 ls s3://devops-agent-collection-${ACCOUNT_ID}-us-east-1/investigations-v2/ --recursive
    ```
 4. **Wait for replication** (~1-2 minutes) and verify in the dashboard bucket:
    ```bash
@@ -308,15 +308,36 @@ aws cloudformation delete-stack --stack-name devops-agent-collection --region us
 
 ### Remove S3 Data
 
-```bash
-# Empty and delete buckets (dashboard account)
-aws s3 rm s3://devops-agent-dashboard-centralized-${DASHBOARD_ACCOUNT_ID} --recursive
-aws s3 rb s3://devops-agent-dashboard-centralized-${DASHBOARD_ACCOUNT_ID}
+Both buckets have **versioning enabled**, so `aws s3 rm --recursive` is not sufficient — it
+deletes current object versions but leaves noncurrent versions and delete markers behind, and
+`aws s3 rb` then fails with `BucketNotEmpty`.
 
-# Each workload account
-aws s3 rm s3://devops-agent-collection-${ACCOUNT_ID} --recursive
-aws s3 rb s3://devops-agent-collection-${ACCOUNT_ID}
+The simplest path is the S3 console's **Empty bucket** action, which purges all versions in
+one step. To do it from the CLI, delete every version and delete marker first:
+
+```bash
+# Purge all versions and delete markers, then remove the bucket.
+# Repeat the delete-objects call if the bucket held more than 1,000 versions.
+purge_bucket() {
+  BUCKET=$1
+  aws s3api delete-objects --bucket "${BUCKET}" --delete "$(
+    aws s3api list-object-versions --bucket "${BUCKET}" --output json \
+      --query '{Objects: [Versions[].{Key:Key,VersionId:VersionId}, DeleteMarkers[].{Key:Key,VersionId:VersionId}][]}'
+  )"
+  aws s3 rb "s3://${BUCKET}"
+}
+
+# Dashboard account
+purge_bucket devops-agent-dashboard-centralized-${DASHBOARD_ACCOUNT_ID}
+
+# Each workload account -- note the region suffix in the bucket name
+purge_bucket devops-agent-collection-${ACCOUNT_ID}-us-east-1
 ```
+
+**Purge the buckets before deleting the CloudFormation stacks.** The buckets are declared
+`DeletionPolicy: Delete`, so stack deletion attempts to remove them — and fails with
+`The bucket you tried to delete is not empty. You must delete all versions in the bucket.`
+if any object versions remain. Order matters: purge first, then delete the stack.
 
 ## FAQ
 

@@ -40,7 +40,7 @@ All DevOps Agent actions are Read or List access level. There are no Write actio
 | `aidevops:ListJournalRecords` | List | `agentspace/*` | Read investigation summary + utilization |
 | `aidevops:ListExecutions` | List | `agentspace/*` | Backfill discovery |
 | `aidevops:ListBacklogTasks` | List | `agentspace/*` | Backfill discovery |
-| `s3:PutObject` | Write | `devops-agent-collection-<account>/*` | Write collected records |
+| `s3:PutObject` | Write | `devops-agent-collection-<account>-<region>/*` | Write collected records |
 
 `ListAgentSpaces` is scoped to `*` because the [Service Authorization Reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_devops-agent.html) defines no resource type for it. Every other action is scoped to `arn:aws:aidevops:<region>:<account>:agentspace/*`.
 
