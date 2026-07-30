@@ -56,8 +56,8 @@ This solution provides a centralized operations dashboard for [AWS DevOps Agent]
 
 | Account Role | Resources |
 |--------------|-----------|
-| Workload Account(s) | Lambda functions, EventBridge rules, S3 collection bucket |
-| Dashboard Account | Centralized S3 bucket, Glue crawler/database, Athena workgroup, QuickSight analysis |
+| Workload Account(s) | Collector Lambda, EventBridge rule, S3 collection bucket |
+| Dashboard Account | Centralized S3 bucket, Glue crawler/database, Athena workgroup + results bucket, QuickSight analysis |
 
 ## Cost
 

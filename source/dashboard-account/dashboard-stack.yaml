@@ -133,6 +133,34 @@ Resources:
           Value: devops-agent-dashboard
 
   # ============================================
+  # Athena WorkGroup
+  # ============================================
+  # Without this, queries run in the account's default `primary` workgroup and
+  # results land in Athena's own auto-created bucket -- leaving AthenaResultsBucket
+  # created but never written to. Worse, in an account where Athena has never been
+  # used, `primary` has no OutputLocation at all and every query fails, so the
+  # dashboard would break on first install.
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "devops-agent-${AWS::AccountId}"
+      Description: "Query workgroup for the DevOps Agent operations dashboard"
+      State: ENABLED
+      RecursiveDeleteOption: true
+      WorkGroupConfiguration:
+        # EnforceWorkGroupConfiguration keeps results in this bucket even if a
+        # client supplies its own OutputLocation.
+        EnforceWorkGroupConfiguration: true
+        PublishCloudWatchMetricsEnabled: true
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${AthenaResultsBucket}/query-results/"
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+      Tags:
+        - Key: Project
+          Value: devops-agent-dashboard
+
+  # ============================================
   # Glue Database + Crawler
   # ============================================
   GlueDatabase:
@@ -222,7 +250,7 @@ Resources:
               - athena:GetQueryResults
               - athena:StopQueryExecution
               - athena:GetWorkGroup
-            Resource: "*"
+            Resource: !Sub "arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkGroup}"
           - Sid: GlueAccess
             Effect: Allow
             Action:
@@ -389,6 +417,10 @@ Outputs:
 
   AthenaResultsBucket:
     Value: !Ref AthenaResultsBucket
+
+  AthenaWorkGroupName:
+    Value: !Ref AthenaWorkGroup
+    Description: "Athena workgroup used by the QuickSight data source"
 
   GlueDatabaseName:
     Value: !Ref GlueDatabase

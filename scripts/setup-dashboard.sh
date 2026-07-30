@@ -18,13 +18,24 @@ echo "QuickSight User: ${QS_USER}"
 # ============================================
 # 1. Create Athena Data Source
 # ============================================
-echo "Creating Athena data source..."
+# The workgroup is created by dashboard-stack.yaml and pins query results to the
+# solution's own results bucket. Do NOT use "primary" -- in an account where Athena
+# has never been used, primary has no output location and every query fails.
+WORKGROUP="devops-agent-${ACCOUNT_ID}"
+
+if ! aws athena get-work-group --work-group "${WORKGROUP}" --region "${REGION}" >/dev/null 2>&1; then
+  echo "ERROR: Athena workgroup ${WORKGROUP} not found."
+  echo "Deploy source/dashboard-account/dashboard-stack.yaml first (Step 1)."
+  exit 1
+fi
+
+echo "Creating Athena data source (workgroup: ${WORKGROUP})..."
 aws quicksight create-data-source \
   --aws-account-id "${ACCOUNT_ID}" \
   --data-source-id "devops-agent-athena-ds" \
   --name "DevOps Agent Athena" \
   --type "ATHENA" \
-  --data-source-parameters '{"AthenaParameters":{"WorkGroup":"primary"}}' \
+  --data-source-parameters "{\"AthenaParameters\":{\"WorkGroup\":\"${WORKGROUP}\"}}" \
   --permissions "[{\"Principal\":\"${QS_USER}\",\"Actions\":[\"quicksight:DescribeDataSource\",\"quicksight:DescribeDataSourcePermissions\",\"quicksight:PassDataSource\",\"quicksight:UpdateDataSource\",\"quicksight:DeleteDataSource\",\"quicksight:UpdateDataSourcePermissions\"]}]" \
   --region "${REGION}" 2>/dev/null || echo "  (data source already exists)"
 
