@@ -432,9 +432,16 @@ QuickSight calculated field: `(60 - durationminutes) / 60`
 
 The 60-minute baseline represents typical manual RCA time. This is configurable in QuickSight by editing the calculated field or adding a parameter.
 
-## Recommendations Collection (MVP)
+## Recommendations Collection (PROPOSED — not yet implemented)
 
-A second, independent collector captures the DevOps Agent's *recommendations* — the
+> **Status: design only.** Nothing described in this section is deployed. The
+> CloudFormation templates in this repository do **not** create a recommendations
+> collector, table, IAM permissions, schedule, or dashboard sheet. This section records an
+> agreed design and the live-API research behind it so the reasoning is not lost before the
+> code is written. Everything under "Verified against live data" was measured against real
+> AgentSpaces; everything else is intent.
+
+A second, independent collector would capture the DevOps Agent's *recommendations* — the
 preventative improvements it proposes, shown as "Improvements" in the console. This is
 separate from investigation collection in every respect: different trigger (schedule, not
 event), different grain (current state, not historical event), different table, different
