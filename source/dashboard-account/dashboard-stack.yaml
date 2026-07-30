@@ -206,6 +206,7 @@ Resources:
       Targets:
         S3Targets:
           - Path: !Sub "s3://${DashboardBucket}/investigations-v2/"
+          - Path: !Sub "s3://${DashboardBucket}/recommendations-v1/"
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG

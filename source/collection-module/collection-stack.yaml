@@ -86,6 +86,18 @@ Resources:
               Account: !Ref DashboardAccountId
               AccessControlTranslation:
                 Owner: Destination
+          - Id: ReplicateRecommendations
+            Status: Enabled
+            Priority: 2
+            Filter:
+              Prefix: "recommendations-v1/"
+            DeleteMarkerReplication:
+              Status: Enabled
+            Destination:
+              Bucket: !Sub "arn:aws:s3:::${DashboardBucketName}"
+              Account: !Ref DashboardAccountId
+              AccessControlTranslation:
+                Owner: Destination
       Tags:
         - Key: Project
           Value: devops-agent-dashboard
@@ -175,6 +187,8 @@ Resources:
                   - aidevops:ListJournalRecords
                   - aidevops:ListExecutions
                   - aidevops:ListBacklogTasks
+                  - aidevops:ListGoals
+                  - aidevops:ListRecommendations
                 Resource: !Sub "arn:${AWS::Partition}:aidevops:${AWS::Region}:${AWS::AccountId}:agentspace/*"
               - Effect: Allow
                 Action:
@@ -437,10 +451,169 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt InvestigationCompletedRule.Arn
 
+  # ============================================
+  # Recommendation Collector (weekly schedule)
+  # ============================================
+  RecommendationCollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: "/aws/lambda/devops-agent-recommendation-collector"
+      RetentionInDays: !Ref LogRetentionDays
+
+  RecommendationCollectorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: RecommendationCollectorLogGroup
+    Properties:
+      FunctionName: devops-agent-recommendation-collector
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt CollectorRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          COLLECTION_BUCKET: !Ref CollectionBucket
+          ACCOUNT_ID: !Ref AWS::AccountId
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          from datetime import datetime, timezone
+
+          s3 = boto3.client('s3')
+          devops_agent = boto3.client('devops-agent')
+          BUCKET = os.environ['COLLECTION_BUCKET']
+          ACCOUNT_ID = os.environ['ACCOUNT_ID']
+
+          def handler(event, context):
+              collected = 0
+              errors = 0
+
+              # 1. List all AgentSpaces
+              agent_spaces = []
+              next_token = None
+              while True:
+                  params = {}
+                  if next_token:
+                      params['nextToken'] = next_token
+                  resp = devops_agent.list_agent_spaces(**params)
+                  agent_spaces.extend(resp.get('agentSpaces', []))
+                  next_token = resp.get('nextToken')
+                  if not next_token:
+                      break
+
+              print(f"Found {len(agent_spaces)} AgentSpaces")
+              collected_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+              for space in agent_spaces:
+                  agent_space_id = space['agentSpaceId']
+
+                  # 2. Get workload tag
+                  try:
+                      info = devops_agent.get_agent_space(agentSpaceId=agent_space_id)
+                      workload_name = info.get('tags', {}).get('workload', 'unknown')
+                  except Exception as e:
+                      print(f"  WARNING: Could not get AgentSpace {agent_space_id}: {e}")
+                      workload_name = 'unknown'
+
+                  # 3. Get goals to find lastSuccessfulTaskId
+                  try:
+                      goals_response = devops_agent.list_goals(agentSpaceId=agent_space_id)
+                      goals = goals_response.get('goals', [])
+                  except Exception as e:
+                      print(f"  WARNING: Could not list goals for {agent_space_id}: {e}")
+                      goals = []
+
+                  # 4. For each goal, get current recommendations
+                  space_recommendations = []
+                  for goal in goals:
+                      task_id = goal.get('lastSuccessfulTaskId')
+                      if not task_id:
+                          continue
+
+                      # list-recommendations is NOT auto-paginated -- handle nextToken
+                      nt = None
+                      while True:
+                          params = {
+                              'agentSpaceId': agent_space_id,
+                              'taskId': task_id,
+                              'limit': 100
+                          }
+                          if nt:
+                              params['nextToken'] = nt
+                          try:
+                              r = devops_agent.list_recommendations(**params)
+                          except Exception as e:
+                              print(f"  ERROR: {agent_space_id}/{task_id}: {e}")
+                              errors += 1
+                              break
+
+                          for rec in r.get('recommendations', []):
+                              space_recommendations.append({
+                                  'workloadName': workload_name,
+                                  'collected_at': collected_at,
+                                  'recommendationId': rec['recommendationId'],
+                                  'title': rec['title'],
+                                  'status': rec['status'],
+                                  'priority': rec['priority'],
+                                  'taskId': rec['taskId']
+                              })
+
+                          nt = r.get('nextToken')
+                          if not nt:
+                              break
+
+                  # 5. Write to S3
+                  key = f"recommendations-v1/account_id={ACCOUNT_ID}/agentspace_id={agent_space_id}/current.json"
+                  if space_recommendations:
+                      body = '\n'.join(json.dumps(r) for r in space_recommendations)
+                      collected += len(space_recommendations)
+                      print(f"  {agent_space_id} ({workload_name}): {len(space_recommendations)} recommendations")
+                  else:
+                      placeholder = {
+                          'workloadName': workload_name,
+                          'collected_at': collected_at,
+                          'recommendationId': 'none',
+                          'title': 'No recommendations exist',
+                          'status': 'N/A',
+                          'priority': 'N/A',
+                          'taskId': 'none'
+                      }
+                      body = json.dumps(placeholder)
+                      print(f"  {agent_space_id} ({workload_name}): 0 recommendations (placeholder)")
+
+                  s3.put_object(Bucket=BUCKET, Key=key, Body=body.encode('utf-8'))
+
+              print(f"\nDone. Collected: {collected}, Errors: {errors}")
+              return {'statusCode': 200, 'collected': collected, 'errors': errors}
+
+  RecommendationScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: devops-agent-recommendation-schedule
+      Description: "Collect current DevOps Agent recommendations weekly"
+      ScheduleExpression: "rate(7 days)"
+      State: ENABLED
+      Targets:
+        - Id: RecommendationCollector
+          Arn: !GetAtt RecommendationCollectorFunction.Arn
+
+  RecommendationInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RecommendationCollectorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RecommendationScheduleRule.Arn
+
 Outputs:
   CollectionBucketName:
     Value: !Ref CollectionBucket
   CollectorFunctionArn:
     Value: !GetAtt CollectorFunction.Arn
+  RecommendationCollectorFunctionArn:
+    Value: !GetAtt RecommendationCollectorFunction.Arn
   EventBridgeRuleArn:
     Value: !GetAtt InvestigationCompletedRule.Arn
