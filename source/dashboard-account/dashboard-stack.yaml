@@ -1,0 +1,401 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  DevOps Agent Operations Dashboard — Dashboard Stack (V2)
+  Deploy ONCE in the centralized dashboard/analytics account.
+  Creates S3 data lake, Glue crawler, QuickSight dashboard (via Custom Resource).
+  No scripts needed — fully automated.
+
+Parameters:
+  WorkloadAccountIds:
+    Type: CommaDelimitedList
+    Description: "Comma-separated AWS Account IDs that will send investigation data"
+
+  QuickSightUserArn:
+    Type: String
+    Description: "ARN of the QuickSight user to own the dashboard (e.g., arn:aws:quicksight:us-east-1:123456789012:user/default/Admin/username)"
+
+  QuickSightServiceRoleName:
+    Type: String
+    Default: "aws-quicksight-service-role-v0"
+    Description: "Name of the QuickSight service role (check IAM if unsure)"
+
+  GlueDatabaseName:
+    Type: String
+    Default: "devops_agent_dashboard"
+    Description: "Name for the Glue/Athena database"
+
+  DataRetentionDays:
+    Type: Number
+    Default: 1095
+    MinValue: 1
+    Description: >
+      How long to keep investigation records in the centralized bucket, in days.
+      This is the data the dashboard queries, so it caps how far back trend and
+      month-over-month analysis can reach. Default is 3 years. Note that
+      lifecycle deletions are NOT replicated, so this setting is independent of
+      the workload accounts' staging retention.
+
+  AthenaResultsRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    Description: "How long to keep Athena query results. These are disposable."
+
+Resources:
+
+  # ============================================
+  # S3 Data Lake Bucket
+  # ============================================
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "devops-agent-dashboard-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      # Cross-account replication writes here, but nothing should be public.
+      # The bucket policy grants access by aws:PrincipalAccount only.
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: false   # a bucket policy IS required for replication
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldData
+            Status: Enabled
+            ExpirationInDays: !Ref DataRetentionDays
+      Tags:
+        - Key: Project
+          Value: devops-agent-dashboard
+
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowReplicationFromWorkloadAccounts
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - s3:ReplicateObject
+              - s3:ReplicateDelete
+              - s3:ReplicateTags
+              - s3:ObjectOwnerOverrideToBucketOwner
+            Resource: !Sub "${DashboardBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                aws:PrincipalAccount: !Ref WorkloadAccountIds
+          - Sid: AllowReplicationCheck
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - s3:List*
+              - s3:GetBucketVersioning
+              - s3:PutBucketVersioning
+            Resource: !GetAtt DashboardBucket.Arn
+            Condition:
+              StringEquals:
+                aws:PrincipalAccount: !Ref WorkloadAccountIds
+
+  # ============================================
+  # Athena Results Bucket
+  # ============================================
+  AthenaResultsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "devops-agent-athena-results-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireResults
+            Status: Enabled
+            ExpirationInDays: !Ref AthenaResultsRetentionDays
+      Tags:
+        - Key: Project
+          Value: devops-agent-dashboard
+
+  # ============================================
+  # Glue Database + Crawler
+  # ============================================
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref GlueDatabaseName
+        Description: "DevOps Agent investigation analytics"
+
+  GlueCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "devops-agent-glue-crawler-role-${AWS::AccountId}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt DashboardBucket.Arn
+                  - !Sub "${DashboardBucket.Arn}/*"
+
+  InvestigationsCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub "devops-agent-crawler-${AWS::AccountId}"
+      Role: !GetAtt GlueCrawlerRole.Arn
+      DatabaseName: !Ref GlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${DashboardBucket}/investigations-v2/"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+      Schedule:
+        ScheduleExpression: "cron(0/30 * * * ? *)"
+
+  # ============================================
+  # QuickSight Service Role Permissions
+  # ============================================
+  QuickSightServicePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "DevOpsAgentDashboardAccess-${AWS::AccountId}"
+      Roles:
+        - !Ref QuickSightServiceRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: S3Access
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:GetBucketLocation
+            Resource:
+              - !GetAtt DashboardBucket.Arn
+              - !Sub "${DashboardBucket.Arn}/*"
+              - !GetAtt AthenaResultsBucket.Arn
+              - !Sub "${AthenaResultsBucket.Arn}/*"
+          - Sid: AthenaResultsWrite
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:AbortMultipartUpload
+            Resource:
+              - !Sub "${AthenaResultsBucket.Arn}/*"
+          - Sid: AthenaAccess
+            Effect: Allow
+            Action:
+              - athena:StartQueryExecution
+              - athena:GetQueryExecution
+              - athena:GetQueryResults
+              - athena:StopQueryExecution
+              - athena:GetWorkGroup
+            Resource: "*"
+          - Sid: GlueAccess
+            Effect: Allow
+            Action:
+              - glue:GetTable
+              - glue:GetTables
+              - glue:GetDatabase
+              - glue:GetDatabases
+              - glue:GetPartitions
+              - glue:GetPartition
+              - glue:BatchGetPartition
+            Resource: "*"
+
+  # ============================================
+  # Custom Resource: QuickSight Setup
+  # Creates data source, datasets, and dashboard automatically
+  # ============================================
+  QuickSightSetupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "devops-agent-qs-setup-role-${AWS::AccountId}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: QuickSightFullAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - quicksight:*
+                Resource: "*"
+
+  QuickSightSetupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "devops-agent-qs-setup-${AWS::AccountId}"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt QuickSightSetupRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          ACCOUNT_ID: !Ref AWS::AccountId
+          REGION: !Ref AWS::Region
+          QS_USER_ARN: !Ref QuickSightUserArn
+          DATABASE_NAME: !Ref GlueDatabaseName
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import cfnresponse
+          import time
+
+          qs = boto3.client('quicksight')
+          ACCOUNT = os.environ['ACCOUNT_ID']
+          REGION = os.environ['REGION']
+          QS_USER = os.environ['QS_USER_ARN']
+          DB = os.environ['DATABASE_NAME']
+          TABLE = 'investigations_v2'
+
+          DS_ID = 'devops-agent-athena'
+          DS_ARN = f'arn:aws:quicksight:{REGION}:{ACCOUNT}:datasource/{DS_ID}'
+          PERMS = [{'Principal': QS_USER, 'Actions': ['quicksight:DescribeDataSet','quicksight:DescribeDataSetPermissions','quicksight:PassDataSet','quicksight:DescribeIngestion','quicksight:ListIngestions','quicksight:UpdateDataSet','quicksight:DeleteDataSet','quicksight:CreateIngestion','quicksight:CancelIngestion','quicksight:UpdateDataSetPermissions']}]
+          DS_PERMS = [{'Principal': QS_USER, 'Actions': ['quicksight:DescribeDataSource','quicksight:DescribeDataSourcePermissions','quicksight:PassDataSource','quicksight:UpdateDataSource','quicksight:DeleteDataSource','quicksight:UpdateDataSourcePermissions']}]
+          AN_PERMS = [{'Principal': QS_USER, 'Actions': ['quicksight:RestoreAnalysis','quicksight:UpdateAnalysisPermissions','quicksight:DeleteAnalysis','quicksight:DescribeAnalysisPermissions','quicksight:QueryAnalysis','quicksight:DescribeAnalysis','quicksight:UpdateAnalysis']}]
+
+          def create_resources():
+              # Data Source
+              try:
+                  qs.create_data_source(AwsAccountId=ACCOUNT, DataSourceId=DS_ID, Name='DevOps Agent - Athena', Type='ATHENA', DataSourceParameters={'AthenaParameters':{'WorkGroup':'primary'}}, Permissions=DS_PERMS)
+              except qs.exceptions.ResourceExistsException:
+                  pass
+
+              time.sleep(2)
+
+              # Datasets
+              datasets = {
+                  'devops-agent-v2': ('DevOps Agent - Investigations', f"SELECT executionid, workloadname, accountid, status, priority, durationminutes, investigationdate, investigationmonth, CAST(resolved AS VARCHAR) as resolved, rootcause, rootcausedescription, symptomcount, causecount, gapcount, resourcecount, contextwindowutilization FROM {DB}.{TABLE}", [{'Name':'executionid','Type':'STRING'},{'Name':'workloadname','Type':'STRING'},{'Name':'accountid','Type':'STRING'},{'Name':'status','Type':'STRING'},{'Name':'priority','Type':'STRING'},{'Name':'durationminutes','Type':'DECIMAL'},{'Name':'investigationdate','Type':'STRING'},{'Name':'investigationmonth','Type':'STRING'},{'Name':'resolved','Type':'STRING'},{'Name':'rootcause','Type':'STRING'},{'Name':'rootcausedescription','Type':'STRING'},{'Name':'symptomcount','Type':'INTEGER'},{'Name':'causecount','Type':'INTEGER'},{'Name':'gapcount','Type':'INTEGER'},{'Name':'resourcecount','Type':'INTEGER'},{'Name':'contextwindowutilization','Type':'DECIMAL'}]),
+                  'devops-agent-v2-resources': ('DevOps Agent - Resources', f"SELECT executionid, workloadname, accountid, investigationmonth, resource FROM {DB}.{TABLE} CROSS JOIN UNNEST(relatedresources) AS t(resource)", [{'Name':'executionid','Type':'STRING'},{'Name':'workloadname','Type':'STRING'},{'Name':'accountid','Type':'STRING'},{'Name':'investigationmonth','Type':'STRING'},{'Name':'resource','Type':'STRING'}]),
+                  'devops-agent-v2-details': ('DevOps Agent - Details', f"SELECT executionid, workloadname, accountid, '1_root_cause' as recordtype, rootcause as title FROM {DB}.{TABLE} WHERE rootcause IS NOT NULL AND rootcause != '' UNION ALL SELECT executionid, workloadname, accountid, '2_cause' as recordtype, cause as title FROM {DB}.{TABLE} CROSS JOIN UNNEST(causes) AS t(cause) UNION ALL SELECT executionid, workloadname, accountid, '3_symptom' as recordtype, symptom as title FROM {DB}.{TABLE} CROSS JOIN UNNEST(symptoms) AS t(symptom) UNION ALL SELECT executionid, workloadname, accountid, '4_gap' as recordtype, gap as title FROM {DB}.{TABLE} CROSS JOIN UNNEST(gaps) AS t(gap)", [{'Name':'executionid','Type':'STRING'},{'Name':'workloadname','Type':'STRING'},{'Name':'accountid','Type':'STRING'},{'Name':'recordtype','Type':'STRING'},{'Name':'title','Type':'STRING'}])
+              }
+
+              for ds_id, (name, sql, cols) in datasets.items():
+                  try:
+                      qs.delete_data_set(AwsAccountId=ACCOUNT, DataSetId=ds_id)
+                      time.sleep(2)
+                  except:
+                      pass
+                  qs.create_data_set(AwsAccountId=ACCOUNT, DataSetId=ds_id, Name=name, ImportMode='DIRECT_QUERY', PhysicalTableMap={'t':{'CustomSql':{'DataSourceArn':DS_ARN,'Name':ds_id,'SqlQuery':sql,'Columns':cols}}}, Permissions=PERMS)
+
+              time.sleep(2)
+
+              # Analysis (dashboard) - simplified version without full definition
+              try:
+                  qs.delete_analysis(AwsAccountId=ACCOUNT, AnalysisId='devops-agent-v2-dashboard', ForceDeleteWithoutRecovery=True)
+                  time.sleep(3)
+              except:
+                  pass
+
+              # Create minimal analysis - customer can customize visuals in QuickSight UI
+              qs.create_analysis(
+                  AwsAccountId=ACCOUNT,
+                  AnalysisId='devops-agent-v2-dashboard',
+                  Name='DevOps Agent - Operations Dashboard',
+                  Definition={
+                      'DataSetIdentifierDeclarations': [
+                          {'Identifier': 'main', 'DataSetArn': f'arn:aws:quicksight:{REGION}:{ACCOUNT}:dataset/devops-agent-v2'},
+                          {'Identifier': 'resources', 'DataSetArn': f'arn:aws:quicksight:{REGION}:{ACCOUNT}:dataset/devops-agent-v2-resources'},
+                          {'Identifier': 'details', 'DataSetArn': f'arn:aws:quicksight:{REGION}:{ACCOUNT}:dataset/devops-agent-v2-details'}
+                      ],
+                      'Sheets': [{'SheetId':'s1','Name':'Operations Dashboard','Visuals':[{'KPIVisual':{'VisualId':'kpi-1','Title':{'Visibility':'VISIBLE','FormatText':{'PlainText':'Total Investigations'}},'ChartConfiguration':{'FieldWells':{'Values':[{'CategoricalMeasureField':{'FieldId':'f1','Column':{'DataSetIdentifier':'main','ColumnName':'executionid'},'AggregationFunction':'DISTINCT_COUNT'}}],'TargetValues':[],'TrendGroups':[]},'SortConfiguration':{}},'Actions':[],'ColumnHierarchies':[]}}]}]
+                  },
+                  Permissions=AN_PERMS
+              )
+
+          def delete_resources():
+              try: qs.delete_analysis(AwsAccountId=ACCOUNT, AnalysisId='devops-agent-v2-dashboard', ForceDeleteWithoutRecovery=True)
+              except: pass
+              for ds_id in ['devops-agent-v2','devops-agent-v2-resources','devops-agent-v2-details']:
+                  try: qs.delete_data_set(AwsAccountId=ACCOUNT, DataSetId=ds_id)
+                  except: pass
+              try: qs.delete_data_source(AwsAccountId=ACCOUNT, DataSourceId=DS_ID)
+              except: pass
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] in ['Create', 'Update']:
+                      create_resources()
+                  elif event['RequestType'] == 'Delete':
+                      delete_resources()
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Status': 'Complete'})
+              except Exception as e:
+                  print(f"Error: {e}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  QuickSightSetup:
+    Type: Custom::QuickSightSetup
+    DependsOn:
+      - QuickSightServicePolicy
+      - GlueDatabase
+      - InvestigationsCrawler
+    Properties:
+      ServiceToken: !GetAtt QuickSightSetupFunction.Arn
+
+Outputs:
+  DashboardBucketName:
+    Value: !Ref DashboardBucket
+    Description: "Pass this as DashboardBucketName parameter to collection-stack.yaml"
+    Export:
+      Name: DevOpsAgentDashboardBucket
+
+  DashboardAccountId:
+    Value: !Ref AWS::AccountId
+    Description: "Pass this as DashboardAccountId parameter to collection-stack.yaml"
+
+  AthenaResultsBucket:
+    Value: !Ref AthenaResultsBucket
+
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase
+
+  CrawlerName:
+    Value: !Ref InvestigationsCrawler
+
+  QuickSightDashboard:
+    Value: !Sub "https://${AWS::Region}.quicksight.aws.amazon.com/sn/analyses/devops-agent-v2-dashboard"
+    Description: "Open this URL to view the dashboard"
