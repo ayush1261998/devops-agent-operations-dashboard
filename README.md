@@ -47,7 +47,7 @@ This solution provides a centralized operations dashboard for [AWS DevOps Agent]
 1. **DevOps Agent** completes an investigation in a workload account
 2. **Amazon EventBridge** captures the `Investigation Completed` event
 3. **AWS Lambda** (investigation collector) fetches journal records via the DevOps Agent API, parses the `investigation_summary` and `utilization` records, and writes a flat JSON file to S3
-4. **Amazon S3 Cross-Region Replication** copies data from workload accounts to a centralized dashboard account bucket
+4. **Amazon S3 Replication** copies data cross-account from each workload account to the centralized dashboard bucket (same region)
 5. **AWS Glue Crawler** (every 30 min) discovers the schema and updates the Glue Data Catalog
 6. **Amazon Athena** provides SQL access to the investigation data
 7. **Amazon QuickSight** renders the 5-sheet operations dashboard
@@ -67,7 +67,7 @@ This solution provides a centralized operations dashboard for [AWS DevOps Agent]
 |---------|-------|---------------|
 | AWS Lambda | 100 invocations × 500ms × 512MB | $0.01 |
 | Amazon S3 | 100 objects × 3KB + storage | $0.01 |
-| S3 Cross-Region Replication | 100 objects | $0.01 |
+| S3 Replication (cross-account) | 100 objects | $0.01 |
 | AWS Glue Crawler | 48 runs/day × 30 days | $0.50 |
 | Amazon Athena | ~10 queries/day × 10MB scanned | $0.15 |
 | Amazon QuickSight | 1 author license | $24.00 |
@@ -136,7 +136,20 @@ There is no reverse dependency, so the order is safe: the dashboard bucket polic
 
 ### Step 1. [Dashboard Account] Deploy the Dashboard Stack
 
-Creates the centralized S3 bucket, Glue database and crawlers, and the QuickSight service role.
+Creates the centralized S3 bucket, Glue database and crawler, Athena workgroup, and attaches
+the required IAM policy to the existing QuickSight service role.
+
+> **Find your values first:**
+> ```bash
+> # QuickSight user ARN (pick your user from the list)
+> aws quicksight list-users --aws-account-id ${DASHBOARD_ACCOUNT_ID} \
+>   --namespace default --region us-east-1 --query 'UserList[].Arn' --output table
+>
+> # QuickSight service role name (default: aws-quicksight-service-role-v0)
+> aws iam list-roles --query "Roles[?contains(RoleName,'quicksight')].RoleName" --output text
+> ```
+> If the role name differs from `aws-quicksight-service-role-v0`, pass it as
+> `QuickSightServiceRoleName` below.
 
 ```bash
 DASHBOARD_ACCOUNT_ID=<your-dashboard-account-id>
@@ -168,7 +181,13 @@ Creates the collection bucket with replication, the collector Lambda, and the Ev
 
 ```bash
 DASHBOARD_ACCOUNT_ID=<your-dashboard-account-id>
-DASHBOARD_BUCKET=devops-agent-dashboard-centralized-${DASHBOARD_ACCOUNT_ID}
+
+# Get the bucket name from the dashboard stack output:
+DASHBOARD_BUCKET=$(aws cloudformation describe-stacks \
+  --stack-name devops-agent-dashboard --region us-east-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='DashboardBucketName'].OutputValue" --output text)
+
+echo "Dashboard bucket: ${DASHBOARD_BUCKET}"
 
 aws cloudformation deploy \
   --template-file source/collection-module/collection-stack.yaml \
@@ -218,7 +237,7 @@ After deployment, verify the pipeline works end-to-end:
    ```
 4. **Wait for replication** (~1-2 minutes) and verify in the dashboard bucket:
    ```bash
-   aws s3 ls s3://devops-agent-dashboard-centralized-${DASHBOARD_ACCOUNT_ID}/investigations-v2/ --recursive
+   aws s3 ls s3://devops-agent-dashboard-${DASHBOARD_ACCOUNT_ID}/investigations-v2/ --recursive
    ```
 5. **Run the Glue crawler** (or wait for the 30-min schedule):
    ```bash
@@ -267,6 +286,16 @@ bash scripts/backfill-historical.sh us-east-1             # execute
 ```
 
 The script walks `ListAgentSpaces` → `ListBacklogTasks`, selects tasks where `taskType=INVESTIGATION` and `status=COMPLETED`, and replays each through the collector Lambda. It is idempotent — safe to re-run. `--dry-run` works before the collection stack is deployed.
+
+**Ordering:** After the backfill completes, wait for S3 replication (~1–2 minutes), then run
+the Glue crawler in the dashboard account before running `setup-dashboard.sh`. The setup
+script requires the Athena table to exist, which requires the crawler to have processed at
+least one object.
+
+**Tag corrections:** If you tag (or re-tag) an AgentSpace after initial collection, simply
+re-run the backfill in that account. The same S3 keys are overwritten with the corrected
+`workloadName`. Then run the crawler to pick up the updated records. No manual deletion or
+deduplication is needed — the design guarantees idempotency.
 
 ## Security
 
@@ -328,7 +357,7 @@ purge_bucket() {
 }
 
 # Dashboard account
-purge_bucket devops-agent-dashboard-centralized-${DASHBOARD_ACCOUNT_ID}
+purge_bucket devops-agent-dashboard-${DASHBOARD_ACCOUNT_ID}
 
 # Each workload account -- note the region suffix in the bucket name
 purge_bucket devops-agent-collection-${ACCOUNT_ID}-us-east-1
@@ -372,10 +401,10 @@ A: No. Live capture and backfill derive timing identically from the same journal
 A: Because a successful execution reports `executionStatus: STOPPED`, not `COMPLETED` — the Execution enum (`FAILED | RUNNING | STOPPED | CANCELED | TIMED_OUT`) contains no success value at all. Task-level `status` is the field that actually says `COMPLETED`.
 
 **Q: Is the backfill safe to run twice?**
-A: Yes. The S3 key is derived from `executionId` plus investigation date, so re-runs overwrite in place rather than duplicating rows.
+A: Yes. The S3 key is derived solely from `executionId`, so re-runs overwrite in place rather than duplicating rows. Duration, cost, and root cause are recomputed from the same immutable journal records and produce the same values.
 
 **Q: What happens if an AgentSpace isn't tagged with `workload`?**
-A: The investigation is still captured but `workloadName` shows as "unknown". Tag the AgentSpace, then re-run the backfill script — it overwrites the existing record in place and corrects the value.
+A: The investigation is still captured but `workloadName` shows as "unknown". Tag the AgentSpace, then re-run the backfill script — it overwrites the existing records in place and corrects the value. Run the Glue crawler afterward to pick up the change. No duplicates are created.
 
 **Q: Can I change the 60-minute manual baseline for ROI calculations?**
 A: Yes. The `hoursSaved` calculated field in QuickSight uses the formula `(60 - durationminutes) / 60`. Edit the calculated field in QuickSight to adjust the baseline, or create a QuickSight parameter for dynamic adjustment.
@@ -391,6 +420,100 @@ A: Yes. Deploy the collection stack to the new account and update the dashboard 
 
 **Q: What if the Glue crawler finds schema changes?**
 A: The crawler is configured with `UpdateBehavior: UPDATE_IN_DATABASE`. New columns are added automatically. Removed columns are logged but not deleted.
+
+## Troubleshooting
+
+### Collection stack fails with `LogGroup already exists`
+
+```
+Resource of type 'AWS::Logs::LogGroup' with identifier
+'/aws/lambda/devops-agent-investigation-collector' already exists.
+```
+
+**Cause:** A previous deployment (even a failed one that rolled back) caused Lambda to
+auto-create the log group before CloudFormation could. Deleting the stack does not remove
+it because CloudFormation never owned it.
+
+**Fix:** Delete the orphaned log group, then retry:
+
+```bash
+aws logs delete-log-group \
+  --log-group-name /aws/lambda/devops-agent-investigation-collector \
+  --region us-east-1
+
+# If the stack is in ROLLBACK_COMPLETE, delete it first:
+aws cloudformation delete-stack --stack-name devops-agent-collection --region us-east-1
+aws cloudformation wait stack-delete-complete --stack-name devops-agent-collection --region us-east-1
+
+# Then retry the create
+aws cloudformation deploy ...
+```
+
+### Setup script fails with `Table does not exist`
+
+```
+WARNING: Table devops_agent_dashboard.investigations_v2 does not exist yet.
+```
+
+**Cause:** The Glue crawler hasn't run yet, or no data has been collected/backfilled.
+
+**Fix:** Ensure data exists in the centralized bucket, then run the crawler:
+
+```bash
+# Check data exists
+aws s3 ls s3://devops-agent-dashboard-${DASHBOARD_ACCOUNT_ID}/investigations-v2/ --recursive
+
+# Run crawler
+aws glue start-crawler --name devops-agent-crawler-${DASHBOARD_ACCOUNT_ID} --region us-east-1
+
+# Wait for READY state, then re-run setup
+aws glue get-crawler --name devops-agent-crawler-${DASHBOARD_ACCOUNT_ID} \
+  --query 'Crawler.State' --region us-east-1
+```
+
+### Backfill shows 0 investigations but AgentSpaces exist
+
+**Possible causes:**
+1. No COMPLETED investigations — the agent hasn't finished any tasks yet, or all tasks are
+   `SYSTEM_LEARNING`/`EVALUATION` type (filtered out by design).
+2. Disk full — the script uses here documents that require `/tmp` write access. Check
+   `df -h /tmp` and free space if needed.
+3. Credentials expired — the script will silently return empty results from the API.
+
+### Replication not working (objects in collection bucket but not centralized)
+
+1. Verify the dashboard bucket exists and the bucket policy allows the workload account:
+   ```bash
+   aws s3api get-bucket-policy --bucket devops-agent-dashboard-${DASHBOARD_ACCOUNT_ID}
+   ```
+2. Check replication status on a specific object:
+   ```bash
+   aws s3api head-object \
+     --bucket devops-agent-collection-${ACCOUNT_ID}-us-east-1 \
+     --key investigations-v2/account_id=.../agentspace_id=.../exe-ops1-....json \
+     --query ReplicationStatus
+   ```
+   Should return `COMPLETED`. `PENDING` means it hasn't replicated yet (wait 1–2 minutes).
+   `FAILED` means a permissions issue — check the replication role and destination bucket policy.
+
+### Dashboard shows "unknown" for workload names
+
+The AgentSpace was not tagged with `workload=<name>` when the investigation was collected.
+
+**Fix:** Tag the AgentSpace and re-run the backfill:
+
+```bash
+# Tag it
+aws devops-agent tag-resource \
+  --resource-arn arn:aws:aidevops:us-east-1:${ACCOUNT_ID}:agentspace/${AGENTSPACE_ID} \
+  --tags workload=my-workload --region us-east-1
+
+# Re-run backfill (overwrites in place with corrected workloadName)
+bash scripts/backfill-historical.sh us-east-1
+
+# Then run the crawler in the dashboard account
+aws glue start-crawler --name devops-agent-crawler-${DASHBOARD_ACCOUNT_ID} --region us-east-1
+```
 
 ## Revisions
 
