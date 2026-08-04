@@ -102,7 +102,20 @@ aws quicksight create-data-set \
   --region "${REGION}" 2>/dev/null || echo "  (details dataset already exists)"
 
 # ============================================
-# 6. Apply Dashboard Definition
+# 6. Create Recommendations Dataset
+# ============================================
+echo "Creating recommendations dataset..."
+aws quicksight create-data-set \
+  --aws-account-id "${ACCOUNT_ID}" \
+  --data-set-id "devops-agent-v2-recommendations" \
+  --name "DevOps Agent - Recommendations" \
+  --import-mode "DIRECT_QUERY" \
+  --physical-table-map "{\"rec-table\":{\"CustomSql\":{\"DataSourceArn\":\"${DS_ARN}\",\"Name\":\"recommendations\",\"SqlQuery\":\"SELECT account_id, agentspace_id, workloadname, collected_at, recommendationid, title, status, priority, taskid FROM ${GLUE_DB}.recommendations_v1 WHERE recommendationid != 'none'\",\"Columns\":[{\"Name\":\"account_id\",\"Type\":\"STRING\"},{\"Name\":\"agentspace_id\",\"Type\":\"STRING\"},{\"Name\":\"workloadname\",\"Type\":\"STRING\"},{\"Name\":\"collected_at\",\"Type\":\"STRING\"},{\"Name\":\"recommendationid\",\"Type\":\"STRING\"},{\"Name\":\"title\",\"Type\":\"STRING\"},{\"Name\":\"status\",\"Type\":\"STRING\"},{\"Name\":\"priority\",\"Type\":\"STRING\"},{\"Name\":\"taskid\",\"Type\":\"STRING\"}]}}}" \
+  --permissions "[{\"Principal\":\"${QS_USER}\",\"Actions\":[\"quicksight:DescribeDataSet\",\"quicksight:DescribeDataSetPermissions\",\"quicksight:PassDataSet\",\"quicksight:DescribeIngestion\",\"quicksight:ListIngestions\",\"quicksight:UpdateDataSet\",\"quicksight:DeleteDataSet\",\"quicksight:CreateIngestion\",\"quicksight:CancelIngestion\",\"quicksight:UpdateDataSetPermissions\"]}]" \
+  --region "${REGION}" 2>/dev/null || echo "  (recommendations dataset already exists)"
+
+# ============================================
+# 7. Apply Dashboard Definition
 # ============================================
 echo "Creating analysis from definition..."
 DEFINITION_FILE="$(dirname "$0")/dashboard-definition.json"

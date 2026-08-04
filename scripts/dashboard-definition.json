@@ -2,7 +2,8 @@
   "DataSetIdentifierDeclarations": [
     {"Identifier": "resources", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-resources"},
     {"Identifier": "main", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2"},
-    {"Identifier": "details", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-details"}
+    {"Identifier": "details", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-details"},
+    {"Identifier": "recommendations", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-recommendations"}
   ],
   "CalculatedFields": [
     {
@@ -14,6 +15,11 @@
       "DataSetIdentifier": "main",
       "Name": "totalHoursSaved",
       "Expression": "(60 - {durationminutes}) / 60"
+    },
+    {
+      "DataSetIdentifier": "recommendations",
+      "Name": "recCount",
+      "Expression": "1"
     }
   ],
   "ParameterDeclarations": [],
@@ -93,6 +99,18 @@
         {"BarChartVisual": {"VisualId": "bar-cost-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Agent Cost by Workload ($)"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "roi4", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "roi5", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
         {"BarChartVisual": {"VisualId": "bar-cost-month", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Agent Cost by Month ($)"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "roi6", "Column": {"DataSetIdentifier": "main", "ColumnName": "investigationmonth"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "roi7", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "VERTICAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
         {"TableVisual": {"VisualId": "tbl-roi-detail", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Cost & Savings Detail (per Investigation)"}}, "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {"GroupBy": [{"CategoricalDimensionField": {"FieldId": "roi8", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "roi9", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}}}, {"CategoricalDimensionField": {"FieldId": "roi10", "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcause"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "roi11", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}, {"NumericalMeasureField": {"FieldId": "roi12", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}, {"NumericalMeasureField": {"FieldId": "roi13", "Column": {"DataSetIdentifier": "main", "ColumnName": "hoursSaved"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}]}}, "SortConfiguration": {}}, "Actions": []}}
+      ]
+    },
+    {
+      "SheetId": "s6", "Name": "Recommendations", "ContentType": "INTERACTIVE",
+      
+      "Visuals": [
+        {"KPIVisual": {"VisualId": "kpi-rec-total", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Total Open Recommendations"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "rec1", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "recCount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "kpi-rec-workloads", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Workloads with Recommendations"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"CategoricalMeasureField": {"FieldId": "rec2", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "workloadname"}, "AggregationFunction": "DISTINCT_COUNT"}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
+        {"BarChartVisual": {"VisualId": "bar-rec-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations by Workload"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "rec3", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "workloadname"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "rec4", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "recCount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
+        {"PieChartVisual": {"VisualId": "pie-rec-status", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations by Status"}}, "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "rec5", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "status"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "rec6", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "recCount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}]}}, "SortConfiguration": {}, "DonutOptions": {"ArcOptions": {"ArcThickness": "MEDIUM"}}}, "Actions": [], "ColumnHierarchies": []}},
+        {"BarChartVisual": {"VisualId": "bar-rec-priority", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations by Priority"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "rec7", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "priority"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "rec8", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "recCount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
+        {"TableVisual": {"VisualId": "tbl-rec-detail", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendation Details"}}, "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {"GroupBy": [{"CategoricalDimensionField": {"FieldId": "rec9", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "rec10", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "title"}}}, {"CategoricalDimensionField": {"FieldId": "rec11", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "status"}}}, {"CategoricalDimensionField": {"FieldId": "rec12", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "priority"}}}, {"CategoricalDimensionField": {"FieldId": "rec13", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "account_id"}}}], "Values": []}}, "SortConfiguration": {}}, "Actions": []}}
       ]
     }
   ]
