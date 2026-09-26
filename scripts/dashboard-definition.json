@@ -1,117 +1,497 @@
 {
   "DataSetIdentifierDeclarations": [
-    {"Identifier": "resources", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-resources"},
     {"Identifier": "main", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2"},
+    {"Identifier": "resources", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-resources"},
     {"Identifier": "details", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-details"},
-    {"Identifier": "recommendations", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-recommendations"}
+    {"Identifier": "recs", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-recommendations"}
   ],
+
+  "ParameterDeclarations": [
+    {"IntegerParameterDeclaration": {"ParameterValueType": "SINGLE_VALUED", "Name": "Baseline", "DefaultValues": {"StaticValues": [60]}}}
+  ],
+
   "CalculatedFields": [
-    {
-      "DataSetIdentifier": "main",
-      "Name": "hoursSaved",
-      "Expression": "(60 - {durationminutes}) / 60"
-    },
-    {
-      "DataSetIdentifier": "main",
-      "Name": "totalHoursSaved",
-      "Expression": "(60 - {durationminutes}) / 60"
-    },
-    {
-      "DataSetIdentifier": "recommendations",
-      "Name": "recCount",
-      "Expression": "1"
-    }
+    {"DataSetIdentifier": "main", "Name": "invDate",        "Expression": "parseDate({investigationdate}, 'yyyy-MM-dd')"},
+    {"DataSetIdentifier": "main", "Name": "resolvedFlag",   "Expression": "ifelse({resolved} = 'true', 1, 0)"},
+    {"DataSetIdentifier": "main", "Name": "resolvedLabel",  "Expression": "ifelse({resolved} = 'true', 'Yes', 'No')"},
+    {"DataSetIdentifier": "main", "Name": "hasGap",         "Expression": "ifelse({gapcount} > 0, 1, 0)"},
+    {"DataSetIdentifier": "main", "Name": "hasCompaction",  "Expression": "ifelse({compactioncount} > 0, 1, 0)"},
+    {"DataSetIdentifier": "main", "Name": "resolutionRate", "Expression": "sum({resolvedFlag}) / count({executionid})"},
+    {"DataSetIdentifier": "main", "Name": "gapRate",        "Expression": "sum({hasGap}) / count({executionid})"},
+    {"DataSetIdentifier": "main", "Name": "compactionRate", "Expression": "sum({hasCompaction}) / count({executionid})"},
+    {"DataSetIdentifier": "main", "Name": "unresolvedCount","Expression": "count({executionid}) - sum({resolvedFlag})"},
+    {"DataSetIdentifier": "main", "Name": "hoursSavedRow",  "Expression": "ifelse(${Baseline} - {durationminutes} > 0, (${Baseline} - {durationminutes}) / 60, 0)"},
+    {"DataSetIdentifier": "main", "Name": "isOutlier",      "Expression": "ifelse({resolved} = 'false' OR ({contextwindowutilization} > 80 AND {compactioncount} > 0), 1, 0)"},
+    {"DataSetIdentifier": "details", "Name": "findingType",  "Expression": "ifelse({recordtype} = '1_root_cause', '1 · Root cause', {recordtype} = '2_cause', '2 · Contributing cause', {recordtype} = '3_symptom', '3 · Symptom', {recordtype} = '4_gap', '4 · Gap', '5 · Resource examined')"},
+    {"DataSetIdentifier": "recs", "Name": "collectedAt",    "Expression": "parseDate(replace(replace({collected_at}, 'T', ' '), 'Z', ''), 'yyyy-MM-dd HH:mm:ss')"},
+    {"DataSetIdentifier": "recs", "Name": "recCount",       "Expression": "1"}
   ],
-  "ParameterDeclarations": [],
+
   "FilterGroups": [
-    {
-      "FilterGroupId": "fg-wl",
-      "Filters": [{"CategoryFilter": {"FilterId": "f-wl", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}, "Configuration": {"FilterListConfiguration": {"MatchOperator": "CONTAINS", "SelectAllOptions": "FILTER_ALL_VALUES", "NullOption": "NON_NULLS_ONLY"}}}}],
-      "ScopeConfiguration": {"SelectedSheets": {"SheetVisualScopingConfigurations": [{"SheetId": "s1", "Scope": "ALL_VISUALS"}]}},
-      "Status": "ENABLED", "CrossDataset": "SINGLE_DATASET"
-    },
-    {
-      "FilterGroupId": "fg-acct",
-      "Filters": [{"CategoryFilter": {"FilterId": "f-acct", "Column": {"DataSetIdentifier": "main", "ColumnName": "accountid"}, "Configuration": {"FilterListConfiguration": {"MatchOperator": "CONTAINS", "SelectAllOptions": "FILTER_ALL_VALUES", "NullOption": "NON_NULLS_ONLY"}}}}],
-      "ScopeConfiguration": {"SelectedSheets": {"SheetVisualScopingConfigurations": [{"SheetId": "s1", "Scope": "ALL_VISUALS"}]}},
-      "Status": "ENABLED", "CrossDataset": "SINGLE_DATASET"
-    }
+    {"FilterGroupId": "fg-date", "Status": "ENABLED", "CrossDataset": "SINGLE_DATASET",
+     "ScopeConfiguration": {"AllSheets": {}},
+     "Filters": [{"RelativeDatesFilter": {"DefaultFilterControlConfiguration": {"Title": "Date range", "ControlOptions": {"DefaultRelativeDateTimeOptions": {"DisplayOptions": {"TitleOptions": {"Visibility": "VISIBLE"}}}}}, "FilterId": "f-date", "Column": {"DataSetIdentifier": "main", "ColumnName": "invDate"},
+       "AnchorDateConfiguration": {"AnchorOption": "NOW"}, "TimeGranularity": "MONTH", "MinimumGranularity": "DAY",
+       "RelativeDateType": "LAST", "RelativeDateValue": 12, "NullOption": "NON_NULLS_ONLY"}}]},
+    {"FilterGroupId": "fg-wl", "Status": "ENABLED", "CrossDataset": "ALL_DATASETS",
+     "ScopeConfiguration": {"AllSheets": {}},
+     "Filters": [{"CategoryFilter": {"DefaultFilterControlConfiguration": {"Title": "Workload", "ControlOptions": {"DefaultDropdownOptions": {"Type": "MULTI_SELECT", "DisplayOptions": {"SelectAllOptions": {"Visibility": "VISIBLE"}, "TitleOptions": {"Visibility": "VISIBLE"}}}}}, "FilterId": "f-wl", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"},
+       "Configuration": {"FilterListConfiguration": {"MatchOperator": "CONTAINS", "SelectAllOptions": "FILTER_ALL_VALUES", "NullOption": "NON_NULLS_ONLY"}}}}]},
+    {"FilterGroupId": "fg-acct", "Status": "ENABLED", "CrossDataset": "ALL_DATASETS",
+     "ScopeConfiguration": {"AllSheets": {}},
+     "Filters": [{"CategoryFilter": {"DefaultFilterControlConfiguration": {"Title": "Account", "ControlOptions": {"DefaultDropdownOptions": {"Type": "MULTI_SELECT", "DisplayOptions": {"SelectAllOptions": {"Visibility": "VISIBLE"}, "TitleOptions": {"Visibility": "VISIBLE"}}}}}, "FilterId": "f-acct", "Column": {"DataSetIdentifier": "main", "ColumnName": "accountid"},
+       "Configuration": {"FilterListConfiguration": {"MatchOperator": "CONTAINS", "SelectAllOptions": "FILTER_ALL_VALUES", "NullOption": "NON_NULLS_ONLY"}}}}]},
+    {"FilterGroupId": "fg-pri", "Status": "ENABLED", "CrossDataset": "SINGLE_DATASET",
+     "ScopeConfiguration": {"AllSheets": {}},
+     "Filters": [{"CategoryFilter": {"DefaultFilterControlConfiguration": {"Title": "Priority", "ControlOptions": {"DefaultDropdownOptions": {"Type": "MULTI_SELECT", "DisplayOptions": {"SelectAllOptions": {"Visibility": "VISIBLE"}, "TitleOptions": {"Visibility": "VISIBLE"}}}}}, "FilterId": "f-pri", "Column": {"DataSetIdentifier": "main", "ColumnName": "priority"},
+       "Configuration": {"FilterListConfiguration": {"MatchOperator": "CONTAINS", "SelectAllOptions": "FILTER_ALL_VALUES", "NullOption": "NON_NULLS_ONLY"}}}}]},
+    {"FilterGroupId": "fg-outlier", "Status": "ENABLED", "CrossDataset": "SINGLE_DATASET",
+     "ScopeConfiguration": {"SelectedSheets": {"SheetVisualScopingConfigurations": [{"SheetId": "inv", "Scope": "SELECTED_VISUALS", "VisualIds": ["inv-outliers"]}]}},
+     "Filters": [{"NumericEqualityFilter": {"FilterId": "f-outlier", "Column": {"DataSetIdentifier": "main", "ColumnName": "isOutlier"},
+       "Value": 1, "MatchOperator": "EQUALS", "NullOption": "NON_NULLS_ONLY"}}]},
+    {"FilterGroupId": "fg-gaponly", "Status": "ENABLED", "CrossDataset": "SINGLE_DATASET",
+     "ScopeConfiguration": {"SelectedSheets": {"SheetVisualScopingConfigurations": [{"SheetId": "eff", "Scope": "SELECTED_VISUALS", "VisualIds": ["eff-gap-examples"]}]}},
+     "Filters": [{"CategoryFilter": {"FilterId": "f-gaponly", "Column": {"DataSetIdentifier": "details", "ColumnName": "recordtype"},
+       "Configuration": {"CustomFilterConfiguration": {"MatchOperator": "EQUALS", "CategoryValue": "4_gap", "NullOption": "NON_NULLS_ONLY"}}}}]}
   ],
+
   "Sheets": [
     {
-      "SheetId": "s1", "Name": "Operations Overview", "ContentType": "INTERACTIVE",
+      "SheetId": "ov", "Name": "Overview", "ContentType": "INTERACTIVE",
       "FilterControls": [
-        {"Dropdown": {"FilterControlId": "fc-wl", "Title": "Workload", "SourceFilterId": "f-wl", "DisplayOptions": {"SelectAllOptions": {"Visibility": "VISIBLE"}, "TitleOptions": {"Visibility": "VISIBLE", "FontConfiguration": {"FontSize": {"Relative": "MEDIUM"}}}}, "Type": "MULTI_SELECT"}},
-        {"Dropdown": {"FilterControlId": "fc-acct", "Title": "Account", "SourceFilterId": "f-acct", "DisplayOptions": {"SelectAllOptions": {"Visibility": "VISIBLE"}, "TitleOptions": {"Visibility": "VISIBLE", "FontConfiguration": {"FontSize": {"Relative": "MEDIUM"}}}}, "Type": "MULTI_SELECT"}}
+        {"CrossSheet": {"FilterControlId": "fc-date", "SourceFilterId": "f-date"}},
+        {"CrossSheet": {"FilterControlId": "fc-wl", "SourceFilterId": "f-wl"}},
+        {"CrossSheet": {"FilterControlId": "fc-acct", "SourceFilterId": "f-acct"}},
+        {"CrossSheet": {"FilterControlId": "fc-pri", "SourceFilterId": "f-pri"}}
       ],
-      
+      "TextBoxes": [
+        {"SheetTextBoxId": "ov-note", "Content": "<text-box><block align=\"left\"><inline font-size=\"12px\" color=\"#6B7280\">Filters apply to every sheet. Click any bar or slice to cross-filter. Resolved = investigation produced a root_cause finding.</inline></block></text-box>"}
+      ],
       "Visuals": [
-        {"KPIVisual": {"VisualId": "kpi-total", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Total Investigations"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"CategoricalMeasureField": {"FieldId": "v1", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"PieChartVisual": {"VisualId": "pie-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "By Workload"}}, "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v2", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}], "Values": [{"CategoricalMeasureField": {"FieldId": "v3", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}}, "SortConfiguration": {}, "DonutOptions": {"ArcOptions": {"ArcThickness": "WHOLE"}}}, "Actions": [], "ColumnHierarchies": []}},
-        {"PieChartVisual": {"VisualId": "pie-acct", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "By Account"}}, "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v4", "Column": {"DataSetIdentifier": "main", "ColumnName": "accountid"}}}], "Values": [{"CategoricalMeasureField": {"FieldId": "v5", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}}, "SortConfiguration": {}, "DonutOptions": {"ArcOptions": {"ArcThickness": "WHOLE"}}}, "Actions": [], "ColumnHierarchies": []}},
-        {"PieChartVisual": {"VisualId": "pie-pri", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Priority Distribution"}}, "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v6", "Column": {"DataSetIdentifier": "main", "ColumnName": "priority"}}}], "Values": [{"CategoricalMeasureField": {"FieldId": "v7", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}}, "SortConfiguration": {}, "DonutOptions": {"ArcOptions": {"ArcThickness": "WHOLE"}}}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-time", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Investigations Over Time"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v8", "Column": {"DataSetIdentifier": "main", "ColumnName": "investigationmonth"}}}], "Values": [{"CategoricalMeasureField": {"FieldId": "v9", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "VERTICAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-wl-month", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Workloads Over Month (Stacked)"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v10", "Column": {"DataSetIdentifier": "main", "ColumnName": "investigationmonth"}}}], "Values": [{"CategoricalMeasureField": {"FieldId": "v12", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}], "Colors": [{"CategoricalDimensionField": {"FieldId": "v11", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}]}}, "SortConfiguration": {}, "Orientation": "VERTICAL", "BarsArrangement": "STACKED", "Legend": {"Width": "153px"}}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-res-acct", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Resources Affected by Account"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v13", "Column": {"DataSetIdentifier": "resources", "ColumnName": "resource"}}}], "Values": [{"CategoricalMeasureField": {"FieldId": "v15", "Column": {"DataSetIdentifier": "resources", "ColumnName": "executionid"}, "AggregationFunction": "COUNT"}}], "Colors": [{"CategoricalDimensionField": {"FieldId": "v14", "Column": {"DataSetIdentifier": "resources", "ColumnName": "accountid"}}}]}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-recurring", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recurring Resources (# Distinct Investigations)"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v19", "Column": {"DataSetIdentifier": "resources", "ColumnName": "resource"}}}], "Values": [{"CategoricalMeasureField": {"FieldId": "v20", "Column": {"DataSetIdentifier": "resources", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}}
-      ]
+        {"KPIVisual": {"VisualId": "ov-kpi-count", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Investigations"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"CategoricalMeasureField": {"FieldId": "ov-kpi-count-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "ov-kpi-rr", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Resolution rate"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "reached a root cause"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "ov-kpi-rr-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "resolutionRate"}, "FormatConfiguration": {"FormatConfiguration": {"PercentageDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "ov-kpi-mttr", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Median time to RCA"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "ov-kpi-mttr-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "MEDIAN"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "ov-kpi-cost", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Agent cost"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "ov-kpi-cost-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}, "FormatConfiguration": {"FormatConfiguration": {"CurrencyDisplayFormatConfiguration": {"Symbol": "USD", "DecimalPlacesConfiguration": {"DecimalPlaces": 2}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "ov-kpi-hours", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Engineer hours saved"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "vs. manual baseline (Cost sheet slider)"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "ov-kpi-hours-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "hoursSavedRow"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " h", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+
+        {"LineChartVisual": {"VisualId": "ov-trend", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Effectiveness trend — resolution rate ▲ vs gap rate ▼"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Both are boolean rates per month — deterministic, no text matching. Rising resolution with falling gaps = agent becoming self-sufficient."}},
+          "ChartConfiguration": {"FieldWells": {"LineChartAggregatedFieldWells": {
+              "Category": [{"DateDimensionField": {"FieldId": "ov-trend-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "invDate"}, "DateGranularity": "MONTH", "HierarchyId": "ov-trend-x"}}],
+              "Values": [
+                {"NumericalMeasureField": {"FieldId": "ov-trend-rr", "Column": {"DataSetIdentifier": "main", "ColumnName": "resolutionRate"}, "FormatConfiguration": {"FormatConfiguration": {"PercentageDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}},
+                {"NumericalMeasureField": {"FieldId": "ov-trend-gr", "Column": {"DataSetIdentifier": "main", "ColumnName": "gapRate"}, "FormatConfiguration": {"FormatConfiguration": {"PercentageDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}
+              ]}},
+            "Type": "LINE", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "VISIBLE", "Position": "BOTTOM"},
+            "PrimaryYAxisLabelOptions": {"AxisLabelOptions": [{"CustomLabel": "Rate", "ApplyTo": {"FieldId": "ov-trend-rr", "Column": {"DataSetIdentifier": "main", "ColumnName": "resolutionRate"}}}]}},
+          "Actions": [], "ColumnHierarchies": [{"DateTimeHierarchy": {"HierarchyId": "ov-trend-x"}}]}},
+
+        {"BarChartVisual": {"VisualId": "ov-volume", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Investigations per month by workload"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"DateDimensionField": {"FieldId": "ov-vol-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "invDate"}, "DateGranularity": "MONTH", "HierarchyId": "ov-vol-x"}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "ov-vol-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}],
+              "Colors": [{"CategoricalDimensionField": {"FieldId": "ov-vol-c", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}]}},
+            "Orientation": "VERTICAL", "BarsArrangement": "STACKED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "VISIBLE", "Position": "BOTTOM"}},
+          "Actions": [{"CustomActionId": "ov-vol-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": [{"DateTimeHierarchy": {"HierarchyId": "ov-vol-x"}}]}},
+
+        {"BarChartVisual": {"VisualId": "ov-by-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "By workload"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "AgentSpace tag workload= (unknown = untagged)"}},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "ov-wl-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "ov-wl-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}},
+            "SortConfiguration": {"CategorySort": [{"FieldSort": {"FieldId": "ov-wl-v", "Direction": "DESC"}}]},
+            "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "HIDDEN"}},
+          "Actions": [{"CustomActionId": "ov-wl-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}},
+
+        {"PieChartVisual": {"VisualId": "ov-by-acct", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "By account"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "ov-acct-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "accountid"}}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "ov-acct-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}},
+            "DonutOptions": {"ArcOptions": {"ArcThickness": "MEDIUM"}}, "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "VISIBLE", "Position": "BOTTOM"}},
+          "Actions": [{"CustomActionId": "ov-acct-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}},
+
+        {"PieChartVisual": {"VisualId": "ov-by-pri", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "By priority"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "ov-pri-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "priority"}}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "ov-pri-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}},
+            "DonutOptions": {"ArcOptions": {"ArcThickness": "MEDIUM"}}, "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "VISIBLE", "Position": "RIGHT"}},
+          "Actions": [{"CustomActionId": "ov-pri-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}}
+      ],
+      "Layouts": [{"Configuration": {"GridLayout": {
+        "CanvasSizeOptions": {"ScreenCanvasSizeOptions": {"ResizeOption": "FIXED", "OptimizedViewPortWidth": "1600px"}},
+        "Elements": [
+          {"ElementId": "fc-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0,  "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-wl",   "ElementType": "FILTER_CONTROL", "ColumnIndex": 8,  "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 16, "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-pri",  "ElementType": "FILTER_CONTROL", "ColumnIndex": 24, "ColumnSpan": 6, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "ov-note", "ElementType": "TEXT_BOX",       "ColumnIndex": 30, "ColumnSpan": 6, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "ov-kpi-count", "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "ov-kpi-rr",    "ElementType": "VISUAL", "ColumnIndex": 7,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "ov-kpi-mttr",  "ElementType": "VISUAL", "ColumnIndex": 14, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "ov-kpi-cost",  "ElementType": "VISUAL", "ColumnIndex": 21, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "ov-kpi-hours", "ElementType": "VISUAL", "ColumnIndex": 28, "ColumnSpan": 8, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "ov-trend",  "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 36, "RowIndex": 8,  "RowSpan": 11},
+          {"ElementId": "ov-volume",  "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11},
+          {"ElementId": "ov-by-wl",   "ElementType": "VISUAL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11},
+          {"ElementId": "ov-by-acct", "ElementType": "VISUAL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11},
+          {"ElementId": "ov-by-pri",  "ElementType": "VISUAL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11}
+        ]}}}]
     },
+
     {
-      "SheetId": "s2", "Name": "Time to RCA", "ContentType": "INTERACTIVE",
-      
+      "SheetId": "eff", "Name": "Effectiveness", "ContentType": "INTERACTIVE",
+      "FilterControls": [
+        {"CrossSheet": {"FilterControlId": "fc-eff-date", "SourceFilterId": "f-date"}},
+        {"CrossSheet": {"FilterControlId": "fc-eff-wl", "SourceFilterId": "f-wl"}},
+        {"CrossSheet": {"FilterControlId": "fc-eff-acct", "SourceFilterId": "f-acct"}},
+        {"CrossSheet": {"FilterControlId": "fc-eff-pri", "SourceFilterId": "f-pri"}}
+      ],
       "Visuals": [
-        {"KPIVisual": {"VisualId": "kpi-avg", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg Time to RCA (min)"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "v21", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-rca-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg Time to RCA by Workload (min)"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v22", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "v23", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-rca-month", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg Time to RCA Month over Month"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v24", "Column": {"DataSetIdentifier": "main", "ColumnName": "investigationmonth"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "v25", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "VERTICAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"TableVisual": {"VisualId": "tbl-duration", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Investigation Duration Detail"}}, "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {"GroupBy": [{"CategoricalDimensionField": {"FieldId": "v26", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "v27", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}}}, {"CategoricalDimensionField": {"FieldId": "v28", "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcause"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "v29", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}]}}, "SortConfiguration": {}}, "Actions": []}}
-      ]
+        {"KPIVisual": {"VisualId": "eff-p50", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Time to RCA — p50"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff-p50-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"PercentileAggregation": {"PercentileValue": 50}}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "eff-p90", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Time to RCA — p90"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "the slow tail"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff-p90-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"PercentileAggregation": {"PercentileValue": 90}}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "eff-max", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Time to RCA — max"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff-max-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "MAX"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "eff-rr", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Resolution rate"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff-rr-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "resolutionRate"}, "FormatConfiguration": {"FormatConfiguration": {"PercentageDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "eff-gr", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Gap rate"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "hit ≥1 access/data gap"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff-gr-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "gapRate"}, "FormatConfiguration": {"FormatConfiguration": {"PercentageDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+
+        {"BarChartVisual": {"VisualId": "eff-mttr-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Time to RCA by workload — p50 vs p90"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "A wide p50→p90 spread means a workload has hard cases the agent struggles with."}},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "eff-mttr-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}],
+              "Values": [
+                {"NumericalMeasureField": {"FieldId": "eff-mttr-p50", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"PercentileAggregation": {"PercentileValue": 50}}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}},
+                {"NumericalMeasureField": {"FieldId": "eff-mttr-p90", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"PercentileAggregation": {"PercentileValue": 90}}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}
+              ]}},
+            "SortConfiguration": {"CategorySort": [{"FieldSort": {"FieldId": "eff-mttr-p90", "Direction": "DESC"}}]},
+            "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "VISIBLE", "Position": "BOTTOM"}},
+          "Actions": [{"CustomActionId": "eff-mttr-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}},
+
+        {"LineChartVisual": {"VisualId": "eff-mttr-month", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Time to RCA month over month — avg vs p90"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Is the agent getting faster? Watch the gap between avg and p90."}},
+          "ChartConfiguration": {"FieldWells": {"LineChartAggregatedFieldWells": {
+              "Category": [{"DateDimensionField": {"FieldId": "eff-mm-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "invDate"}, "DateGranularity": "MONTH", "HierarchyId": "eff-mm-x"}}],
+              "Values": [
+                {"NumericalMeasureField": {"FieldId": "eff-mm-avg", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}},
+                {"NumericalMeasureField": {"FieldId": "eff-mm-p90", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"PercentileAggregation": {"PercentileValue": 90}}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}
+              ]}},
+            "Type": "LINE", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "VISIBLE", "Position": "BOTTOM"}},
+          "Actions": [], "ColumnHierarchies": [{"DateTimeHierarchy": {"HierarchyId": "eff-mm-x"}}]}},
+
+        {"BarChartVisual": {"VisualId": "eff-rr-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Resolution rate by workload"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Where does the agent fail to reach a root cause?"}},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "eff-rrwl-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}],
+              "Values": [{"NumericalMeasureField": {"FieldId": "eff-rrwl-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "resolutionRate"}, "FormatConfiguration": {"FormatConfiguration": {"PercentageDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}},
+            "SortConfiguration": {"CategorySort": [{"FieldSort": {"FieldId": "eff-rrwl-v", "Direction": "ASC"}}]},
+            "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "HIDDEN"}},
+          "Actions": [{"CustomActionId": "eff-rrwl-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}},
+
+        {"BarChartVisual": {"VisualId": "eff-gap-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Gap rate by workload"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "% of investigations that hit ≥1 gap — a boolean count, not string matching"}},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "eff-gapwl-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}],
+              "Values": [{"NumericalMeasureField": {"FieldId": "eff-gapwl-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "gapRate"}, "FormatConfiguration": {"FormatConfiguration": {"PercentageDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}},
+            "SortConfiguration": {"CategorySort": [{"FieldSort": {"FieldId": "eff-gapwl-v", "Direction": "DESC"}}]},
+            "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "HIDDEN"}},
+          "Actions": [{"CustomActionId": "eff-gapwl-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}},
+
+        {"TableVisual": {"VisualId": "eff-gap-examples", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Gap texts by workload — what to fix"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Agent-reported gaps (AI wording varies, so these are read as themes, not counted)"}},
+          "ChartConfiguration": {"FieldWells": {"TableUnaggregatedFieldWells": {"Values": [
+              {"FieldId": "eff-gapex-wl", "Column": {"DataSetIdentifier": "details", "ColumnName": "workloadname"}},
+              {"FieldId": "eff-gapex-t",  "Column": {"DataSetIdentifier": "details", "ColumnName": "title"}},
+              {"FieldId": "eff-gapex-m",  "Column": {"DataSetIdentifier": "details", "ColumnName": "investigationmonth"}}]}},
+            "SortConfiguration": {"RowSort": [{"FieldSort": {"FieldId": "eff-gapex-wl", "Direction": "ASC"}}]},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "eff-gapex-wl", "CustomLabel": "Workload", "Width": "180px"},
+              {"FieldId": "eff-gapex-t",  "CustomLabel": "Gap reported by agent"},
+              {"FieldId": "eff-gapex-m",  "CustomLabel": "Month", "Width": "90px"}]},
+            "TableOptions": {"HeaderStyle": {"TextWrap": "WRAP"}, "CellStyle": {"TextWrap": "WRAP", "Height": 40}}},
+          "Actions": []}},
+
+        {"PivotTableVisual": {"VisualId": "eff-hotspots", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Resource hotspots — recurring resources within each workload"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Resources as labelled by the agent (roles like “Workload Table”, not ARNs) — meaningful only within a workload, so grouped that way."}},
+          "ChartConfiguration": {"FieldWells": {"PivotTableAggregatedFieldWells": {
+              "Rows": [
+                {"CategoricalDimensionField": {"FieldId": "eff-hs-wl", "Column": {"DataSetIdentifier": "resources", "ColumnName": "workloadname"}}},
+                {"CategoricalDimensionField": {"FieldId": "eff-hs-res", "Column": {"DataSetIdentifier": "resources", "ColumnName": "resource"}}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "eff-hs-n", "Column": {"DataSetIdentifier": "resources", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "eff-hs-wl", "CustomLabel": "Workload"},
+              {"FieldId": "eff-hs-res", "CustomLabel": "Resource (agent label)"},
+              {"FieldId": "eff-hs-n", "CustomLabel": "# investigations"}]},
+            "TableOptions": {"ColumnHeaderStyle": {"TextWrap": "WRAP"}, "RowHeaderStyle": {"TextWrap": "WRAP"}, "CellStyle": {"TextWrap": "WRAP"}}},
+          "Actions": []}},
+
+        {"PivotTableVisual": {"VisualId": "eff-hotspots-acct", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Resources by account"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Same agent-labelled resources, grouped by AWS account — for account-level follow-up."}},
+          "ChartConfiguration": {"FieldWells": {"PivotTableAggregatedFieldWells": {
+              "Rows": [
+                {"CategoricalDimensionField": {"FieldId": "eff-ha-acct", "Column": {"DataSetIdentifier": "resources", "ColumnName": "accountid"}}},
+                {"CategoricalDimensionField": {"FieldId": "eff-ha-wl", "Column": {"DataSetIdentifier": "resources", "ColumnName": "workloadname"}}},
+                {"CategoricalDimensionField": {"FieldId": "eff-ha-res", "Column": {"DataSetIdentifier": "resources", "ColumnName": "resource"}}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "eff-ha-n", "Column": {"DataSetIdentifier": "resources", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "eff-ha-acct", "CustomLabel": "Account"},
+              {"FieldId": "eff-ha-wl", "CustomLabel": "Workload"},
+              {"FieldId": "eff-ha-res", "CustomLabel": "Resource (agent label)"},
+              {"FieldId": "eff-ha-n", "CustomLabel": "# investigations"}]},
+            "TableOptions": {"ColumnHeaderStyle": {"TextWrap": "WRAP"}, "RowHeaderStyle": {"TextWrap": "WRAP"}, "CellStyle": {"TextWrap": "WRAP"}}},
+          "Actions": []}}
+      ],
+      "Layouts": [{"Configuration": {"GridLayout": {
+        "CanvasSizeOptions": {"ScreenCanvasSizeOptions": {"ResizeOption": "FIXED", "OptimizedViewPortWidth": "1600px"}},
+        "Elements": [
+          {"ElementId": "fc-eff-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-eff-wl",   "ElementType": "FILTER_CONTROL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-eff-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-eff-pri",  "ElementType": "FILTER_CONTROL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "eff-p50", "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "eff-p90", "ElementType": "VISUAL", "ColumnIndex": 7,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "eff-max", "ElementType": "VISUAL", "ColumnIndex": 14, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "eff-rr",  "ElementType": "VISUAL", "ColumnIndex": 21, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "eff-gr",  "ElementType": "VISUAL", "ColumnIndex": 28, "ColumnSpan": 8, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "eff-mttr-wl",    "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 12, "RowIndex": 8,  "RowSpan": 11},
+          {"ElementId": "eff-mttr-month", "ElementType": "VISUAL", "ColumnIndex": 12, "ColumnSpan": 12, "RowIndex": 8,  "RowSpan": 11},
+          {"ElementId": "eff-rr-wl",      "ElementType": "VISUAL", "ColumnIndex": 24, "ColumnSpan": 12, "RowIndex": 8,  "RowSpan": 11},
+          {"ElementId": "eff-gap-wl",       "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 12, "RowIndex": 19, "RowSpan": 11},
+          {"ElementId": "eff-gap-examples", "ElementType": "VISUAL", "ColumnIndex": 12, "ColumnSpan": 24, "RowIndex": 19, "RowSpan": 11},
+          {"ElementId": "eff-hotspots",      "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 18, "RowIndex": 30, "RowSpan": 12},
+          {"ElementId": "eff-hotspots-acct", "ElementType": "VISUAL", "ColumnIndex": 18, "ColumnSpan": 18, "RowIndex": 30, "RowSpan": 12}
+        ]}}}]
     },
+
     {
-      "SheetId": "s3", "Name": "Root Cause & Classification", "ContentType": "INTERACTIVE",
-      
+      "SheetId": "inv", "Name": "Investigations", "ContentType": "INTERACTIVE",
+      "FilterControls": [
+        {"CrossSheet": {"FilterControlId": "fc-inv-date", "SourceFilterId": "f-date"}},
+        {"CrossSheet": {"FilterControlId": "fc-inv-wl", "SourceFilterId": "f-wl"}},
+        {"CrossSheet": {"FilterControlId": "fc-inv-acct", "SourceFilterId": "f-acct"}},
+        {"CrossSheet": {"FilterControlId": "fc-inv-pri", "SourceFilterId": "f-pri"}}
+      ],
+      "TextBoxes": [
+        {"SheetTextBoxId": "inv-note", "Content": "<text-box><block align=\"left\"><inline font-size=\"12px\" color=\"#6B7280\">Click a row in “All investigations” to focus the two panels below on that one investigation: its findings (symptoms, causes, root cause, gaps, examined AWS items) and the full root-cause narrative. “Open” links go to the DevOps Agent console.</inline></block></text-box>"}
+      ],
       "Visuals": [
-        {"PieChartVisual": {"VisualId": "donut-class", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Record Classification (Donut)"}}, "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "v30", "Column": {"DataSetIdentifier": "details", "ColumnName": "recordtype"}}}], "Values": [{"CategoricalMeasureField": {"FieldId": "v31", "Column": {"DataSetIdentifier": "details", "ColumnName": "title"}, "AggregationFunction": "COUNT"}}]}}, "SortConfiguration": {}, "DonutOptions": {"ArcOptions": {"ArcThickness": "MEDIUM"}}}, "Actions": [], "ColumnHierarchies": []}},
-        {"PivotTableVisual": {"VisualId": "pivot-cascade", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Cascade: Workload → Investigation → Root Cause → Cause → Symptom"}}, "ChartConfiguration": {"FieldWells": {"PivotTableAggregatedFieldWells": {"Rows": [{"CategoricalDimensionField": {"FieldId": "v46", "Column": {"DataSetIdentifier": "details", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "v47", "Column": {"DataSetIdentifier": "details", "ColumnName": "executionid"}}}, {"CategoricalDimensionField": {"FieldId": "v48", "Column": {"DataSetIdentifier": "details", "ColumnName": "recordtype"}}}, {"CategoricalDimensionField": {"FieldId": "v49", "Column": {"DataSetIdentifier": "details", "ColumnName": "title"}}}], "Columns": [], "Values": [{"CategoricalMeasureField": {"FieldId": "v50", "Column": {"DataSetIdentifier": "details", "ColumnName": "title"}, "AggregationFunction": "COUNT"}}]}}, "SortConfiguration": {"FieldSortOptions": []}, "TableOptions": {"ColumnHeaderStyle": {}, "CellStyle": {}, "RowFieldNamesStyle": {}}, "FieldOptions": {"SelectedFieldOptions": [{"FieldId": "v46", "Visibility": "VISIBLE"}, {"FieldId": "v47", "Visibility": "VISIBLE"}, {"FieldId": "v48", "Visibility": "VISIBLE"}, {"FieldId": "v49", "Visibility": "VISIBLE"}, {"FieldId": "v50", "Visibility": "VISIBLE"}]}}, "Actions": []}},
-        {"TableVisual": {"VisualId": "tbl-raw-rca", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Root Cause Title + Description"}}, "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {"GroupBy": [{"CategoricalDimensionField": {"FieldId": "v32", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "v33", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}}}, {"CategoricalDimensionField": {"FieldId": "v34", "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcause"}}}, {"CategoricalDimensionField": {"FieldId": "v35", "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcausedescription"}}}], "Values": []}}, "SortConfiguration": {}}, "Actions": []}},
-        {"TableVisual": {"VisualId": "tbl-rootcauses", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Root Causes (by Workload & Investigation)"}}, "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {"GroupBy": [{"CategoricalDimensionField": {"FieldId": "v39", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "v40", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}}}, {"CategoricalDimensionField": {"FieldId": "v41", "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcause"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "v42", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}]}}, "SortConfiguration": {}}, "Actions": []}}
-      ]
+        {"TableVisual": {"VisualId": "inv-outliers", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Human follow-up queue — unresolved, or context >80% with compaction"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Empty is good."}},
+          "ChartConfiguration": {"FieldWells": {"TableUnaggregatedFieldWells": {"Values": [
+              {"FieldId": "inv-o-date", "Column": {"DataSetIdentifier": "main", "ColumnName": "investigationdate"}},
+              {"FieldId": "inv-o-wl",   "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}},
+              {"FieldId": "inv-o-pri",  "Column": {"DataSetIdentifier": "main", "ColumnName": "priority"}},
+              {"FieldId": "inv-o-dur",  "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "FormatConfiguration": {"NumberFormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}},
+              {"FieldId": "inv-o-ctx",  "Column": {"DataSetIdentifier": "main", "ColumnName": "contextwindowutilization"}, "FormatConfiguration": {"NumberFormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": "%", "DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}},
+              {"FieldId": "inv-o-cmp",  "Column": {"DataSetIdentifier": "main", "ColumnName": "compactioncount"}},
+              {"FieldId": "inv-o-res",  "Column": {"DataSetIdentifier": "main", "ColumnName": "resolvedLabel"}},
+              {"FieldId": "inv-o-url",  "Column": {"DataSetIdentifier": "main", "ColumnName": "consoleurl"}}]}},
+            "SortConfiguration": {"RowSort": [{"FieldSort": {"FieldId": "inv-o-date", "Direction": "DESC"}}]},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "inv-o-date", "CustomLabel": "Date", "Width": "110px"},
+              {"FieldId": "inv-o-wl",   "CustomLabel": "Workload"},
+              {"FieldId": "inv-o-pri",  "CustomLabel": "Priority", "Width": "100px"},
+              {"FieldId": "inv-o-dur",  "CustomLabel": "Time to RCA", "Width": "110px"},
+              {"FieldId": "inv-o-ctx",  "CustomLabel": "Context", "Width": "90px"},
+              {"FieldId": "inv-o-cmp",  "CustomLabel": "Compactions", "Width": "110px"},
+              {"FieldId": "inv-o-res",  "CustomLabel": "Resolved", "Width": "90px"},
+              {"FieldId": "inv-o-url",  "CustomLabel": "Console", "Width": "90px", "URLStyling": {"LinkConfiguration": {"Target": "NEW_TAB", "Content": {"CustomTextContent": {"Value": "Open", "FontConfiguration": {}}}}}}]}},
+          "Actions": []}},
+
+        {"TableVisual": {"VisualId": "inv-all", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "All investigations"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Click a row to drill into it below"}},
+          "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {
+              "GroupBy": [
+                {"CategoricalDimensionField": {"FieldId": "inv-a-date", "Column": {"DataSetIdentifier": "main", "ColumnName": "investigationdate"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-a-wl",   "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-a-pri",  "Column": {"DataSetIdentifier": "main", "ColumnName": "priority"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-a-res",  "Column": {"DataSetIdentifier": "main", "ColumnName": "resolvedLabel"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-a-rc",   "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcause"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-a-url",  "Column": {"DataSetIdentifier": "main", "ColumnName": "consoleurl"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-a-id",   "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}}}],
+              "Values": [
+                {"NumericalMeasureField": {"FieldId": "inv-a-dur",  "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "MAX"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}},
+                {"NumericalMeasureField": {"FieldId": "inv-a-cost", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "MAX"}, "FormatConfiguration": {"FormatConfiguration": {"CurrencyDisplayFormatConfiguration": {"Symbol": "USD", "DecimalPlacesConfiguration": {"DecimalPlaces": 2}}}}}}]}},
+            "SortConfiguration": {"RowSort": [{"FieldSort": {"FieldId": "inv-a-date", "Direction": "DESC"}}]},
+            "FieldOptions": {"Order": ["inv-a-date", "inv-a-wl", "inv-a-pri", "inv-a-dur", "inv-a-res", "inv-a-rc", "inv-a-cost", "inv-a-url", "inv-a-id"], "SelectedFieldOptions": [
+              {"FieldId": "inv-a-date", "CustomLabel": "Date", "Width": "110px"},
+              {"FieldId": "inv-a-wl",   "CustomLabel": "Workload", "Width": "170px"},
+              {"FieldId": "inv-a-pri",  "CustomLabel": "Priority", "Width": "100px"},
+              {"FieldId": "inv-a-dur",  "CustomLabel": "Time to RCA", "Width": "110px"},
+              {"FieldId": "inv-a-res",  "CustomLabel": "Resolved", "Width": "90px"},
+              {"FieldId": "inv-a-rc",   "CustomLabel": "Root cause"},
+              {"FieldId": "inv-a-cost", "CustomLabel": "Cost", "Width": "90px"},
+              {"FieldId": "inv-a-url",  "CustomLabel": "Console", "Width": "90px", "URLStyling": {"LinkConfiguration": {"Target": "NEW_TAB", "Content": {"CustomTextContent": {"Value": "Open", "FontConfiguration": {}}}}}},
+              {"FieldId": "inv-a-id",   "CustomLabel": "Execution", "Width": "150px"}]},
+            "TableOptions": {"HeaderStyle": {"TextWrap": "WRAP"}, "CellStyle": {"TextWrap": "WRAP", "Height": 40}}},
+          "Actions": [{"CustomActionId": "inv-drill", "Name": "Show investigation detail", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK",
+            "ActionOperations": [{"FilterOperation": {
+              "SelectedFieldsConfiguration": {"SelectedFields": ["inv-a-id"]},
+              "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisuals": ["inv-detail", "inv-rcdesc"]}}}}]}]
+          }},
+
+        {"TableVisual": {"VisualId": "inv-rcdesc", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Selected investigation — full root cause description (raw)"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Agent's complete RCA narrative as written. Select a row above to focus one investigation."}},
+          "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {
+              "GroupBy": [
+                {"CategoricalDimensionField": {"FieldId": "inv-rd-wl",   "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-rd-id",   "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-rd-desc", "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcausedescription"}}}],
+              "Values": []}},
+            "SortConfiguration": {"RowSort": [{"FieldSort": {"FieldId": "inv-rd-wl", "Direction": "ASC"}}]},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "inv-rd-wl",   "CustomLabel": "Workload", "Width": "160px"},
+              {"FieldId": "inv-rd-id",   "CustomLabel": "Execution", "Width": "150px"},
+              {"FieldId": "inv-rd-desc", "CustomLabel": "Root cause description"}]},
+            "TableOptions": {"HeaderStyle": {"TextWrap": "WRAP"}, "CellStyle": {"TextWrap": "WRAP", "Height": 200}}},
+          "Actions": []}},
+
+        {"PivotTableVisual": {"VisualId": "inv-detail", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Investigation findings — what the agent observed, what it concluded, what it examined"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Workload ▸ Execution ▸ Finding type ▸ Finding. Expand/collapse any level; counts roll up. Click a row in All investigations to focus one execution."}},
+          "ChartConfiguration": {"FieldWells": {"PivotTableAggregatedFieldWells": {
+              "Rows": [
+                {"CategoricalDimensionField": {"FieldId": "inv-d-wl",    "Column": {"DataSetIdentifier": "details", "ColumnName": "workloadname"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-d-id",    "Column": {"DataSetIdentifier": "details", "ColumnName": "executionid"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-d-type",  "Column": {"DataSetIdentifier": "details", "ColumnName": "findingType"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-d-title", "Column": {"DataSetIdentifier": "details", "ColumnName": "title"}}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "inv-d-n", "Column": {"DataSetIdentifier": "details", "ColumnName": "title"}, "AggregationFunction": "COUNT"}}]}},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "inv-d-wl",    "CustomLabel": "Workload"},
+              {"FieldId": "inv-d-id",    "CustomLabel": "Execution"},
+              {"FieldId": "inv-d-type",  "CustomLabel": "Finding type"},
+              {"FieldId": "inv-d-title", "CustomLabel": "Finding"},
+              {"FieldId": "inv-d-n",     "CustomLabel": "# findings"}]},
+            "TableOptions": {"ColumnHeaderStyle": {"TextWrap": "WRAP"}, "RowHeaderStyle": {"TextWrap": "WRAP"}, "CellStyle": {"TextWrap": "WRAP"}, "RowFieldNamesStyle": {"TextWrap": "WRAP"}},
+            "TotalOptions": {"RowSubtotalOptions": {"TotalsVisibility": "VISIBLE"}, "RowTotalOptions": {"TotalsVisibility": "HIDDEN"}, "ColumnTotalOptions": {"TotalsVisibility": "HIDDEN"}}},
+          "Actions": []}},
+
+        {"KPIVisual": {"VisualId": "inv-kpi-tools", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg tool calls"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "agent internals"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "inv-kpi-tools-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "totaltoolcalls"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "inv-kpi-sub", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg sub-agents"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "agent internals"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "inv-kpi-sub-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "subagentcount"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "inv-kpi-ctx", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg context window used"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "agent internals"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "inv-kpi-ctx-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "contextwindowutilization"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": "%", "DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "inv-kpi-cmp", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Had ≥1 compaction"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "agent internals"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "inv-kpi-cmp-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "compactionRate"}, "FormatConfiguration": {"FormatConfiguration": {"PercentageDisplayFormatConfiguration": {"DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}}
+      ],
+      "Layouts": [{"Configuration": {"GridLayout": {
+        "CanvasSizeOptions": {"ScreenCanvasSizeOptions": {"ResizeOption": "FIXED", "OptimizedViewPortWidth": "1600px"}},
+        "Elements": [
+          {"ElementId": "fc-inv-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-inv-wl",   "ElementType": "FILTER_CONTROL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-inv-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-inv-pri",  "ElementType": "FILTER_CONTROL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "inv-note",     "ElementType": "TEXT_BOX", "ColumnIndex": 0, "ColumnSpan": 36, "RowIndex": 3,  "RowSpan": 2},
+          {"ElementId": "inv-outliers", "ElementType": "VISUAL",   "ColumnIndex": 0, "ColumnSpan": 36, "RowIndex": 5,  "RowSpan": 8},
+          {"ElementId": "inv-all",      "ElementType": "VISUAL",   "ColumnIndex": 0, "ColumnSpan": 36, "RowIndex": 13, "RowSpan": 12},
+          {"ElementId": "inv-detail",    "ElementType": "VISUAL",  "ColumnIndex": 0,  "ColumnSpan": 36, "RowIndex": 25, "RowSpan": 11},
+          {"ElementId": "inv-rcdesc",    "ElementType": "VISUAL",  "ColumnIndex": 0,  "ColumnSpan": 36, "RowIndex": 36, "RowSpan": 12},
+          {"ElementId": "inv-kpi-tools", "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 48, "RowSpan": 5},
+          {"ElementId": "inv-kpi-sub",   "ElementType": "VISUAL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 48, "RowSpan": 5},
+          {"ElementId": "inv-kpi-ctx",   "ElementType": "VISUAL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 48, "RowSpan": 5},
+          {"ElementId": "inv-kpi-cmp",   "ElementType": "VISUAL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 48, "RowSpan": 5}
+        ]}}}]
     },
+
     {
-      "SheetId": "s4", "Name": "Agent Effectiveness", "ContentType": "INTERACTIVE",
-      
+      "SheetId": "cost", "Name": "Cost & Recommendations", "ContentType": "INTERACTIVE",
+      "FilterControls": [
+        {"CrossSheet": {"FilterControlId": "fc-cost-date", "SourceFilterId": "f-date"}},
+        {"CrossSheet": {"FilterControlId": "fc-cost-wl", "SourceFilterId": "f-wl"}},
+        {"CrossSheet": {"FilterControlId": "fc-cost-acct", "SourceFilterId": "f-acct"}},
+        {"CrossSheet": {"FilterControlId": "fc-cost-pri", "SourceFilterId": "f-pri"}}
+      ],
+      "ParameterControls": [
+        {"Slider": {"ParameterControlId": "pc-baseline", "Title": "Manual investigation baseline (minutes)", "SourceParameterName": "Baseline", "MinimumValue": 15, "MaximumValue": 240, "StepSize": 15, "DisplayOptions": {"TitleOptions": {"Visibility": "VISIBLE"}}}}
+      ],
       "Visuals": [
-        {"KPIVisual": {"VisualId": "kpi-ctx", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg Context Window Utilization (%)"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff1", "Column": {"DataSetIdentifier": "main", "ColumnName": "contextwindowutilization"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"KPIVisual": {"VisualId": "kpi-subagents", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg Sub-Agents per Investigation"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff2", "Column": {"DataSetIdentifier": "main", "ColumnName": "subagentcount"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"KPIVisual": {"VisualId": "kpi-tools", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg Tool Calls per Investigation"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff3", "Column": {"DataSetIdentifier": "main", "ColumnName": "totaltoolcalls"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"KPIVisual": {"VisualId": "kpi-compaction", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Total Context Compactions"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "eff4", "Column": {"DataSetIdentifier": "main", "ColumnName": "compactioncount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-ctx-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Context Window Utilization by Workload (%)"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "eff5", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "eff6", "Column": {"DataSetIdentifier": "main", "ColumnName": "contextwindowutilization"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-tools-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg Tool Calls by Workload"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "eff7", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "eff8", "Column": {"DataSetIdentifier": "main", "ColumnName": "totaltoolcalls"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"TableVisual": {"VisualId": "tbl-eff-detail", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Effectiveness Detail (per Investigation)"}}, "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {"GroupBy": [{"CategoricalDimensionField": {"FieldId": "eff9", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "eff10", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "eff11", "Column": {"DataSetIdentifier": "main", "ColumnName": "contextwindowutilization"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}, {"NumericalMeasureField": {"FieldId": "eff12", "Column": {"DataSetIdentifier": "main", "ColumnName": "subagentcount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}, {"NumericalMeasureField": {"FieldId": "eff13", "Column": {"DataSetIdentifier": "main", "ColumnName": "totaltoolcalls"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}]}}, "SortConfiguration": {}}, "Actions": []}}
-      ]
-    },
-    {
-      "SheetId": "s5", "Name": "ROI & Cost", "ContentType": "INTERACTIVE",
-      
-      "Visuals": [
-        {"KPIVisual": {"VisualId": "kpi-total-cost", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Total Agent Cost ($)"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "roi1", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"KPIVisual": {"VisualId": "kpi-avg-cost", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg Cost per Investigation ($)"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "roi2", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"KPIVisual": {"VisualId": "kpi-hours-saved", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Total Hours Saved (vs 60-min baseline)"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "roi3", "Column": {"DataSetIdentifier": "main", "ColumnName": "hoursSaved"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-cost-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Agent Cost by Workload ($)"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "roi4", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "roi5", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-cost-month", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Agent Cost by Month ($)"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "roi6", "Column": {"DataSetIdentifier": "main", "ColumnName": "investigationmonth"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "roi7", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "VERTICAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"TableVisual": {"VisualId": "tbl-roi-detail", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Cost & Savings Detail (per Investigation)"}}, "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {"GroupBy": [{"CategoricalDimensionField": {"FieldId": "roi8", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "roi9", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}}}, {"CategoricalDimensionField": {"FieldId": "roi10", "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcause"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "roi11", "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}, {"NumericalMeasureField": {"FieldId": "roi12", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}, {"NumericalMeasureField": {"FieldId": "roi13", "Column": {"DataSetIdentifier": "main", "ColumnName": "hoursSaved"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}]}}, "SortConfiguration": {}}, "Actions": []}}
-      ]
-    },
-    {
-      "SheetId": "s6", "Name": "Recommendations", "ContentType": "INTERACTIVE",
-      
-      "Visuals": [
-        {"KPIVisual": {"VisualId": "kpi-rec-total", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Total Open Recommendations"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "rec1", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "recCount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"KPIVisual": {"VisualId": "kpi-rec-workloads", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Workloads with Recommendations"}}, "ChartConfiguration": {"FieldWells": {"Values": [{"CategoricalMeasureField": {"FieldId": "rec2", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "workloadname"}, "AggregationFunction": "DISTINCT_COUNT"}}], "TargetValues": [], "TrendGroups": []}, "SortConfiguration": {}}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-rec-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations by Workload"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "rec3", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "workloadname"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "rec4", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "recCount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"PieChartVisual": {"VisualId": "pie-rec-status", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations by Status"}}, "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "rec5", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "status"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "rec6", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "recCount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}]}}, "SortConfiguration": {}, "DonutOptions": {"ArcOptions": {"ArcThickness": "MEDIUM"}}}, "Actions": [], "ColumnHierarchies": []}},
-        {"BarChartVisual": {"VisualId": "bar-rec-priority", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations by Priority"}}, "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {"Category": [{"CategoricalDimensionField": {"FieldId": "rec7", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "priority"}}}], "Values": [{"NumericalMeasureField": {"FieldId": "rec8", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "recCount"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}}}], "Colors": []}}, "SortConfiguration": {}, "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED"}, "Actions": [], "ColumnHierarchies": []}},
-        {"TableVisual": {"VisualId": "tbl-rec-detail", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendation Details"}}, "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {"GroupBy": [{"CategoricalDimensionField": {"FieldId": "rec9", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "workloadname"}}}, {"CategoricalDimensionField": {"FieldId": "rec10", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "title"}}}, {"CategoricalDimensionField": {"FieldId": "rec11", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "status"}}}, {"CategoricalDimensionField": {"FieldId": "rec12", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "priority"}}}, {"CategoricalDimensionField": {"FieldId": "rec13", "Column": {"DataSetIdentifier": "recommendations", "ColumnName": "account_id"}}}], "Values": []}}, "SortConfiguration": {}}, "Actions": []}}
-      ]
+        {"KPIVisual": {"VisualId": "c-kpi-total", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Total agent cost"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "$0.0083 / sec of investigation"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "c-kpi-total-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}, "FormatConfiguration": {"FormatConfiguration": {"CurrencyDisplayFormatConfiguration": {"Symbol": "USD", "DecimalPlacesConfiguration": {"DecimalPlaces": 2}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "c-kpi-avg", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Avg cost per investigation"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "c-kpi-avg-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "AVERAGE"}, "FormatConfiguration": {"FormatConfiguration": {"CurrencyDisplayFormatConfiguration": {"Symbol": "USD", "DecimalPlacesConfiguration": {"DecimalPlaces": 2}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "c-kpi-max", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Most expensive investigation"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "c-kpi-max-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "MAX"}, "FormatConfiguration": {"FormatConfiguration": {"CurrencyDisplayFormatConfiguration": {"Symbol": "USD", "DecimalPlacesConfiguration": {"DecimalPlaces": 2}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+        {"KPIVisual": {"VisualId": "c-kpi-hours", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Engineer hours saved"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Σ max(0, baseline − time to RCA)"}},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"NumericalMeasureField": {"FieldId": "c-kpi-hours-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "hoursSavedRow"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " h", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}]}}, "Actions": [], "ColumnHierarchies": []}},
+
+        {"BarChartVisual": {"VisualId": "c-by-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Cost by workload"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Which workloads drive agent spend"}},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "c-wl-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}}],
+              "Values": [{"NumericalMeasureField": {"FieldId": "c-wl-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}, "FormatConfiguration": {"FormatConfiguration": {"CurrencyDisplayFormatConfiguration": {"Symbol": "USD", "DecimalPlacesConfiguration": {"DecimalPlaces": 2}}}}}}]}},
+            "SortConfiguration": {"CategorySort": [{"FieldSort": {"FieldId": "c-wl-v", "Direction": "DESC"}}]},
+            "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "HIDDEN"}},
+          "Actions": [{"CustomActionId": "c-wl-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}},
+
+        {"BarChartVisual": {"VisualId": "c-by-month", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Cost per month"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"DateDimensionField": {"FieldId": "c-m-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "invDate"}, "DateGranularity": "MONTH", "HierarchyId": "c-m-x"}}],
+              "Values": [{"NumericalMeasureField": {"FieldId": "c-m-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}, "FormatConfiguration": {"FormatConfiguration": {"CurrencyDisplayFormatConfiguration": {"Symbol": "USD", "DecimalPlacesConfiguration": {"DecimalPlaces": 0}}}}}}]}},
+            "Orientation": "VERTICAL", "BarsArrangement": "CLUSTERED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "HIDDEN"}},
+          "Actions": [], "ColumnHierarchies": [{"DateTimeHierarchy": {"HierarchyId": "c-m-x"}}]}},
+
+        {"BarChartVisual": {"VisualId": "c-hours-month", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Engineer hours saved per month"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Moves with the baseline slider"}},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"DateDimensionField": {"FieldId": "c-h-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "invDate"}, "DateGranularity": "MONTH", "HierarchyId": "c-h-x"}}],
+              "Values": [{"NumericalMeasureField": {"FieldId": "c-h-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "hoursSavedRow"}, "AggregationFunction": {"SimpleNumericalAggregation": "SUM"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " h", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}}]}},
+            "Orientation": "VERTICAL", "BarsArrangement": "CLUSTERED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "HIDDEN"}},
+          "Actions": [], "ColumnHierarchies": [{"DateTimeHierarchy": {"HierarchyId": "c-h-x"}}]}},
+
+        {"PieChartVisual": {"VisualId": "r-status", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations by status"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Snapshot at last poll — no history is kept"}},
+          "ChartConfiguration": {"FieldWells": {"PieChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "r-st-x", "Column": {"DataSetIdentifier": "recs", "ColumnName": "status"}}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "r-st-v", "Column": {"DataSetIdentifier": "recs", "ColumnName": "recommendationid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}},
+            "DonutOptions": {"ArcOptions": {"ArcThickness": "MEDIUM"}}, "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "VISIBLE", "Position": "RIGHT"}},
+          "Actions": [], "ColumnHierarchies": []}},
+
+        {"BarChartVisual": {"VisualId": "r-by-wl", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations by workload"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"BarChartAggregatedFieldWells": {
+              "Category": [{"CategoricalDimensionField": {"FieldId": "r-wl-x", "Column": {"DataSetIdentifier": "recs", "ColumnName": "workloadname"}}}],
+              "Values": [{"CategoricalMeasureField": {"FieldId": "r-wl-v", "Column": {"DataSetIdentifier": "recs", "ColumnName": "recommendationid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}},
+            "SortConfiguration": {"CategorySort": [{"FieldSort": {"FieldId": "r-wl-v", "Direction": "DESC"}}]},
+            "Orientation": "HORIZONTAL", "BarsArrangement": "CLUSTERED", "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "HIDDEN"}},
+          "Actions": [], "ColumnHierarchies": []}},
+
+        {"TableVisual": {"VisualId": "r-fresh", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Recommendations last polled"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "our collector's poll time (weekly) — the only trustworthy freshness signal"}},
+          "ChartConfiguration": {"FieldWells": {"TableAggregatedFieldWells": {
+              "GroupBy": [{"CategoricalDimensionField": {"FieldId": "r-fresh-wl", "Column": {"DataSetIdentifier": "recs", "ColumnName": "workloadname"}}}],
+              "Values": [{"DateMeasureField": {"FieldId": "r-fresh-v", "Column": {"DataSetIdentifier": "recs", "ColumnName": "collectedAt"}, "AggregationFunction": "MAX"}}]}},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "r-fresh-wl", "CustomLabel": "Workload"},
+              {"FieldId": "r-fresh-v", "CustomLabel": "Last polled (UTC)"}]}},
+          "Actions": []}},
+        {"KPIVisual": {"VisualId": "r-open", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Open recommendations"}}, "Subtitle": {"Visibility": "HIDDEN"},
+          "ChartConfiguration": {"FieldWells": {"Values": [{"CategoricalMeasureField": {"FieldId": "r-open-v", "Column": {"DataSetIdentifier": "recs", "ColumnName": "recommendationid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}}, "Actions": [], "ColumnHierarchies": []}},
+
+        {"TableVisual": {"VisualId": "r-table", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Current recommendations"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "The agent's preventative improvements, as proposed"}},
+          "ChartConfiguration": {"FieldWells": {"TableUnaggregatedFieldWells": {"Values": [
+              {"FieldId": "r-t-wl", "Column": {"DataSetIdentifier": "recs", "ColumnName": "workloadname"}},
+              {"FieldId": "r-t-title", "Column": {"DataSetIdentifier": "recs", "ColumnName": "title"}},
+              {"FieldId": "r-t-status", "Column": {"DataSetIdentifier": "recs", "ColumnName": "status"}},
+              {"FieldId": "r-t-pri", "Column": {"DataSetIdentifier": "recs", "ColumnName": "priority"}}]}},
+            "SortConfiguration": {"RowSort": [{"FieldSort": {"FieldId": "r-t-wl", "Direction": "ASC"}}]},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "r-t-wl", "CustomLabel": "Workload", "Width": "170px"},
+              {"FieldId": "r-t-title", "CustomLabel": "Recommendation"},
+              {"FieldId": "r-t-status", "CustomLabel": "Status", "Width": "120px"},
+              {"FieldId": "r-t-pri", "CustomLabel": "Priority", "Width": "100px"}]},
+            "TableOptions": {"HeaderStyle": {"TextWrap": "WRAP"}, "CellStyle": {"TextWrap": "WRAP", "Height": 40}}},
+          "Actions": []}}
+      ],
+      "Layouts": [{"Configuration": {"GridLayout": {
+        "CanvasSizeOptions": {"ScreenCanvasSizeOptions": {"ResizeOption": "FIXED", "OptimizedViewPortWidth": "1600px"}},
+        "Elements": [
+          {"ElementId": "fc-cost-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-cost-wl",   "ElementType": "FILTER_CONTROL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-cost-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-cost-pri",  "ElementType": "FILTER_CONTROL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "c-kpi-total", "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "c-kpi-avg",   "ElementType": "VISUAL", "ColumnIndex": 7,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "c-kpi-max",   "ElementType": "VISUAL", "ColumnIndex": 14, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "c-kpi-hours", "ElementType": "VISUAL", "ColumnIndex": 21, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "pc-baseline", "ElementType": "PARAMETER_CONTROL", "ColumnIndex": 28, "ColumnSpan": 8, "RowIndex": 3, "RowSpan": 5},
+          {"ElementId": "c-by-wl",       "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 12, "RowIndex": 8, "RowSpan": 11},
+          {"ElementId": "c-by-month",    "ElementType": "VISUAL", "ColumnIndex": 12, "ColumnSpan": 12, "RowIndex": 8, "RowSpan": 11},
+          {"ElementId": "c-hours-month", "ElementType": "VISUAL", "ColumnIndex": 24, "ColumnSpan": 12, "RowIndex": 8, "RowSpan": 11},
+          {"ElementId": "r-status", "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 12, "RowIndex": 19, "RowSpan": 11},
+          {"ElementId": "r-by-wl",  "ElementType": "VISUAL", "ColumnIndex": 12, "ColumnSpan": 12, "RowIndex": 19, "RowSpan": 11},
+          {"ElementId": "r-fresh",  "ElementType": "VISUAL", "ColumnIndex": 24, "ColumnSpan": 12, "RowIndex": 19, "RowSpan": 5},
+          {"ElementId": "r-open",   "ElementType": "VISUAL", "ColumnIndex": 24, "ColumnSpan": 12, "RowIndex": 24, "RowSpan": 6},
+          {"ElementId": "r-table",  "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 36, "RowIndex": 30, "RowSpan": 10}
+        ]}}}]
     }
   ]
 }

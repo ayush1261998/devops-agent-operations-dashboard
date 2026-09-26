@@ -35,12 +35,17 @@ All DevOps Agent actions are Read or List access level. There are no Write actio
 
 | IAM Action | Access level | Resource scope | Why needed |
 |---|---|---|---|
-| `aidevops:ListAgentSpaces` | List | `*` (no resource type defined) | Backfill discovery |
+| `aidevops:ListAgentSpaces` | List | `*` (no resource type defined) | Backfill and recommendation discovery |
 | `aidevops:GetAgentSpace` | Read | `agentspace/*` | Read the `workload` tag |
 | `aidevops:ListJournalRecords` | List | `agentspace/*` | Read investigation summary + utilization |
-| `aidevops:ListExecutions` | List | `agentspace/*` | Backfill discovery |
+| `aidevops:ListExecutions` | List | `agentspace/*` | Backfill: find the `ops1` execution for a task |
 | `aidevops:ListBacklogTasks` | List | `agentspace/*` | Backfill discovery |
+| `aidevops:ListGoals` | List | `agentspace/*` | Recommendations: read `lastSuccessfulTaskId` |
+| `aidevops:ListRecommendations` | List | `agentspace/*` | Recommendations: current recommendation set |
+| `tag:GetResources` | Read | `*` | Resource Groups Tagging API access |
 | `s3:PutObject` | Write | `devops-agent-collection-<account>-<region>/*` | Write collected records |
+
+Seven `aidevops` actions, all Read or List. **`aidevops:UpdateRecommendation` is never granted** — it exists in the API, and a reporting dashboard must not be able to accept or reject a recommendation on the customer's behalf.
 
 `ListAgentSpaces` is scoped to `*` because the [Service Authorization Reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_devops-agent.html) defines no resource type for it. Every other action is scoped to `arn:aws:aidevops:<region>:<account>:agentspace/*`.
 
@@ -136,13 +141,16 @@ EventBridge rules only match events emitted after the rule exists. Investigation
 
 ### Discovery Chain
 
-Two calls per AgentSpace. [`ListBacklogTasks`](https://docs.aws.amazon.com/devopsagent/latest/APIReference/API_ListBacklogTasks.html) already carries everything the collector needs, so `ListExecutions` is not required for investigation backfill:
+Three calls per Agent Space. `ListBacklogTasks` identifies the completed investigation tasks,
+and `ListExecutions` selects the investigation execution within each task — a task also carries
+chat and mitigation executions, and only the `agentType=ops1` one has an investigation summary:
 
 ```
-ListAgentSpaces                       -> agentSpaceId[]
-  └─ ListBacklogTasks(agentSpaceId)   -> taskId, executionId, taskType,
-                                         priority, status, createdAt, updatedAt
-       └─ (invoke collector Lambda)
+ListAgentSpaces                              -> agentSpaceId[]
+  └─ ListBacklogTasks(agentSpaceId)          -> taskId, taskType, priority, status
+       └─ ListExecutions(agentSpaceId,       -> executionId where agentType == ops1
+                         taskId)
+            └─ (invoke collector Lambda)
 ```
 
 Verified response shapes:
@@ -221,14 +229,19 @@ The collector Lambda's input contract is an EventBridge event. Backfill construc
 
 This keeps one implementation of the journal parsing, the MTTR calculation, the cost formula, and the S3 key derivation. A standalone backfill writer would be a second copy of that logic and would drift — historical rows would silently stop matching live rows after the next Lambda change. Reusing the Lambda makes backfilled and live rows byte-identical in structure by construction.
 
-Idempotency makes this safe to re-run: the S3 key is derived from `executionId` plus the investigation date, so repeat runs overwrite in place instead of duplicating.
+Idempotency makes this safe to re-run: the S3 key is derived from `accountId`, `agentSpaceId`,
+and `executionId` — all immutable, none computed — so repeat runs overwrite in place instead of
+duplicating. See [S3 Path Convention](#s3-path-convention-and-primary-key).
 
 ### Field Sources for the Synthetic Event
 
 `ListBacklogTasks` supplies every field the event needs. Two are easy to get wrong:
 
 - **`priority`** must be read from the task record (`CRITICAL|HIGH|MEDIUM|LOW|MINIMAL`). Substituting a default silently mislabels every backfilled row, and because the dashboard groups by priority the error is invisible in the data but visible in the charts.
-- **`updatedAt`** on a completed task is the completion time. The live path uses the EventBridge event `time` — when the event was *emitted*, normally within seconds but not guaranteed identical.
+- **`updatedAt`** is not passed at all. Neither path uses a task timestamp or the EventBridge
+  event `time`: the collector derives both timing endpoints from journal records itself, which is
+  what makes a backfilled row identical to a live one. The synthetic event therefore carries no
+  `time` field, and supplying one would have no effect.
 
 ### Running It
 
@@ -333,9 +346,9 @@ The investigation collector Lambda writes flat JSON records with the following s
 | accountId | string | AWS account ID where investigation ran |
 | status | string | COMPLETED |
 | priority | string | MEDIUM, HIGH, CRITICAL |
-| investigationStartedAt | string | Earliest journal record timestamp |
-| investigationCompletedAt | string | EventBridge event time |
-| durationMinutes | number | MTTR in minutes |
+| investigationStartedAt | string | Earliest journal record timestamp, ISO-8601 UTC |
+| investigationCompletedAt | string | The `investigation_summary` record's timestamp — **not** the EventBridge event time (see [Time to RCA](#time-to-rca--stability-guarantee)) |
+| durationMinutes | number | Time to RCA in minutes |
 | investigationDate | string | YYYY-MM-DD |
 | investigationMonth | string | YYYY-MM |
 | resolved | boolean | True if root_cause finding exists |
@@ -345,7 +358,7 @@ The investigation collector Lambda writes flat JSON records with the following s
 | rootCauseDescription | string | Detailed root cause narrative |
 | causes | array[string] | Contributing cause titles |
 | gaps | array[string] | Investigation gap titles |
-| relatedResources | array[string] | Affected AWS resources |
+| relatedResources | array[string] | Resource labels **as written by the agent** — role-style descriptions such as `Workload Table`, not ARNs or resource IDs. Only meaningful within the workload that produced them |
 | symptomCount | integer | Count of symptoms |
 | causeCount | integer | Count of causes |
 | gapCount | integer | Count of gaps |
@@ -353,10 +366,15 @@ The investigation collector Lambda writes flat JSON records with the following s
 | contextWindowUtilization | number | Context window % used (0-100) |
 | compactionCount | integer | Context compaction events (0 = no overflow) |
 | subagentsUsed | array[string] | Sub-agent IDs deployed |
-| toolsUsed | array[object] | Tools with call counts: `{name, count}` |
 | totalToolCalls | integer | Sum of all tool calls |
 | subagentCount | integer | Number of sub-agents used |
-| agentCostUsd | number | Investigation cost at $0.0083/sec |
+| agentCostUsd | number | List-rate investigation cost at $0.0083 per agent-second. Ignores AWS Support plan credits |
+
+> **`toolsUsed` is not persisted.** The collector computes a per-tool breakdown from the
+> `utilization` record but writes only the aggregate `totalToolCalls`. An earlier revision of
+> this document listed a `toolsUsed` array in the schema; no such field is written to S3, and
+> nothing in the dashboard reads one. If per-tool detail is ever wanted, it needs a collector
+> change plus a crawler re-run, not just a dataset change.
 
 ### Execution Types Within a Task
 
@@ -421,16 +439,28 @@ DevOps Agent may produce multiple `utilization` records per execution (progressi
 The boto3 `list_journal_records` API returns `content` as either a JSON string or a pre-parsed dict depending on the SDK version and record type. The Lambda handles both via `isinstance()` check.
 
 ### MTTR Calculation
-- **Start time**: Earliest `createdAt` timestamp across all journal records for the execution
-- **End time**: EventBridge event `time` field (when the completion event was emitted)
+- **Start time**: earliest `createdAt` across all journal records for the execution
+- **End time**: the `investigation_summary` record's `createdAt` — the moment the RCA existed
+
+The EventBridge event `time` field is deliberately **not** used; see
+[Time to RCA](#time-to-rca--stability-guarantee) for why.
 
 ### Agent Cost
-Calculated at `$0.0083/second × durationMinutes × 60`. This is the DevOps Agent per-second rate.
+Calculated at `$0.0083/second × durationMinutes × 60`, the published DevOps Agent per-second
+list rate. This is an estimate derived from journal-record duration, not a billing figure, and
+it does not account for the monthly DevOps Agent credits that AWS Support customers receive.
 
 ### Hours Saved (ROI)
-QuickSight calculated field: `(60 - durationminutes) / 60`
+QuickSight calculated field, driven by a `Baseline` integer parameter exposed as a slider
+(15–240 minutes) on the Cost & Recommendations sheet:
 
-The 60-minute baseline represents typical manual RCA time. This is configurable in QuickSight by editing the calculated field or adding a parameter.
+```
+ifelse(${Baseline} - {durationminutes} > 0, (${Baseline} - {durationminutes}) / 60, 0)
+```
+
+The baseline represents the time the same RCA would have taken manually. It is floored at zero
+so an investigation slower than the baseline contributes nothing rather than a negative number
+that would quietly cancel out real savings elsewhere in the sum.
 
 ## Recommendations Collection
 
@@ -643,31 +673,37 @@ the failure path is unverified.
 
 ### DevOps Agent APIs Used
 
-| API | Purpose |
-|-----|---------|
-| `get_agent_space(agentSpaceId)` | Get AgentSpace tags (workload name) |
-| `list_journal_records(agentSpaceId, executionId, limit=100)` | Fetch investigation journal |
+| API | Used by | Purpose |
+|-----|---------|---------|
+| `list_agent_spaces()` | recommendation collector, backfill | Enumerate Agent Spaces |
+| `get_agent_space(agentSpaceId)` | both collectors, backfill | Read the `workload` tag |
+| `list_journal_records(agentSpaceId, executionId, limit=100)` | investigation collector | Fetch the investigation journal |
+| `list_backlog_tasks(agentSpaceId)` | backfill | Find completed investigation tasks |
+| `list_executions(agentSpaceId, taskId)` | backfill | Select the `ops1` execution |
+| `list_goals(agentSpaceId)` | recommendation collector | Read `lastSuccessfulTaskId` |
+| `list_recommendations(agentSpaceId, taskId)` | recommendation collector | Current recommendation set |
 
-### IAM Permissions Required (Lambda)
-
-```json
-{
-  "Effect": "Allow",
-  "Action": [
-    "aidevops:GetAgentSpace",
-    "aidevops:ListJournalRecords"
-  ],
-  "Resource": "*"
-}
-```
+For the IAM actions and their resource scoping, see [Permissions Model](#permissions-model) —
+that table is the authoritative one.
 
 ## QuickSight Datasets
 
+All four are `DIRECT_QUERY` against Athena, created by `scripts/setup-dashboard.sh`.
+
 | Dataset ID | Source | Purpose |
 |-----------|--------|---------|
-| devops-agent-v2 | Direct SQL on investigations_v2 | Main metrics, KPIs, all scalar fields |
-| devops-agent-v2-resources | UNNEST(relatedresources) | Resource-level analysis |
-| devops-agent-v2-details | UNION ALL of root_cause/cause/symptom/gap | Cascade pivot view |
+| devops-agent-v2 | `investigations_v2`, scalar columns | KPIs, trends, the investigation list |
+| devops-agent-v2-resources | `UNNEST(relatedresources)` | Resource hotspots, by workload and by account |
+| devops-agent-v2-details | `UNION ALL` of root_cause / cause / symptom / gap / **resource** | The findings pivot on the Investigations sheet |
+| devops-agent-v2-recommendations | `recommendations_v1` | Recommendation status, per-workload counts, freshness |
+
+The details dataset carries a `recordtype` column with a numeric prefix (`1_root_cause`,
+`2_cause`, `3_symptom`, `4_gap`, `5_resource`) so the findings pivot sorts in reading order.
+`5_resource` unnests the same array as the resources dataset; folding it in as a fifth finding
+kind lets one pivot show everything the agent produced for a single execution.
+
+The recommendations dataset is skipped by the setup script if `recommendations_v1` does not exist
+yet — that table only appears after the recommendation collector has run once.
 
 ## Troubleshooting
 
@@ -681,8 +717,13 @@ the failure path is unverified.
 ### Sub-agents/tools showing zero
 The Lambda keeps the utilization record with the highest context window value. If all utilization records have empty sub-agent arrays, the investigation may not have used sub-agents (short investigations sometimes don't).
 
-### Negative "hours saved"
-If an investigation takes longer than 60 minutes, the hours saved will be negative. Adjust the baseline in the QuickSight calculated field or add a `MAX(0, ...)` wrapper.
-
 ### Duplicate records from backfill
-The S3 key is deterministic (based on execution ID and investigation date). Re-running the Lambda for the same investigation overwrites the previous record — no duplicates.
+The S3 key is a pure function of `accountId`, `agentSpaceId`, and `executionId` — no computed
+component. Re-running the collector or the backfill for the same investigation overwrites the
+existing object, so duplicates are not possible.
+
+### "Hours saved" looks wrong
+The calculated field floors each row at zero, so an investigation slower than the baseline
+contributes 0 rather than a negative value. If the total looks low, check the baseline slider on
+the Cost & Recommendations sheet — it defaults to 60 minutes and drives both the KPI and the
+monthly chart.

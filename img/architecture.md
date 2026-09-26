@@ -49,7 +49,7 @@ The SVG is the source of truth — edit it, then re-export.
 │                                                    ▼                  │
 │                                    ┌───────────────────────────────┐  │
 │                                    │  Amazon QuickSight            │  │
-│                                    │  5-sheet dashboard            │  │
+│                                    │  4-sheet analysis             │  │
 │                                    └───────────────────────────────┘  │
 └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -67,3 +67,11 @@ The SVG is the source of truth — edit it, then re-export.
   — no date in the path, by design (see implementation guide).
 - Deployment order is Dashboard Account first, then workload accounts. The arrows show data
   flow, not deployment order.
+- The diagram shows **one Region**. An Agent Space monitors its accounts' resources across all
+  Regions, so the Region drawn here is the Region the Agent Spaces live in — not the Regions the
+  investigated workloads run in. Multi-Region aggregation is not implemented.
+- QuickSight shows a **4-sheet analysis** (Overview, Effectiveness, Investigations,
+  Cost & Recommendations). Earlier drafts said 5 sheets.
+- There are **two** collector Lambdas in each workload account: the investigation collector
+  (EventBridge-driven) and the recommendation collector (weekly schedule). Earlier drafts of this
+  diagram showed only one.
