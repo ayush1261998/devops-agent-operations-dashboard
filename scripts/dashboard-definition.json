@@ -3,7 +3,8 @@
     {"Identifier": "main", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2"},
     {"Identifier": "resources", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-resources"},
     {"Identifier": "details", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-details"},
-    {"Identifier": "recs", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-recommendations"}
+    {"Identifier": "recs", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-recommendations"},
+    {"Identifier": "coverage", "DataSetArn": "arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dataset/devops-agent-v2-coverage"}
   ],
 
   "ParameterDeclarations": [
@@ -41,6 +42,10 @@
      "ScopeConfiguration": {"AllSheets": {}},
      "Filters": [{"CategoryFilter": {"DefaultFilterControlConfiguration": {"Title": "Account", "ControlOptions": {"DefaultDropdownOptions": {"Type": "MULTI_SELECT", "DisplayOptions": {"SelectAllOptions": {"Visibility": "VISIBLE"}, "TitleOptions": {"Visibility": "VISIBLE"}}}}}, "FilterId": "f-acct", "Column": {"DataSetIdentifier": "main", "ColumnName": "accountid"},
        "Configuration": {"FilterListConfiguration": {"MatchOperator": "CONTAINS", "SelectAllOptions": "FILTER_ALL_VALUES", "NullOption": "NON_NULLS_ONLY"}}}}]},
+    {"FilterGroupId": "fg-region", "Status": "ENABLED", "CrossDataset": "ALL_DATASETS",
+     "ScopeConfiguration": {"AllSheets": {}},
+     "Filters": [{"CategoryFilter": {"DefaultFilterControlConfiguration": {"Title": "Region", "ControlOptions": {"DefaultDropdownOptions": {"Type": "MULTI_SELECT", "DisplayOptions": {"SelectAllOptions": {"Visibility": "VISIBLE"}, "TitleOptions": {"Visibility": "VISIBLE"}}}}}, "FilterId": "f-region", "Column": {"DataSetIdentifier": "main", "ColumnName": "region"},
+       "Configuration": {"FilterListConfiguration": {"MatchOperator": "CONTAINS", "SelectAllOptions": "FILTER_ALL_VALUES", "NullOption": "NON_NULLS_ONLY"}}}}]},
     {"FilterGroupId": "fg-pri", "Status": "ENABLED", "CrossDataset": "SINGLE_DATASET",
      "ScopeConfiguration": {"AllSheets": {}},
      "Filters": [{"CategoryFilter": {"DefaultFilterControlConfiguration": {"Title": "Priority", "ControlOptions": {"DefaultDropdownOptions": {"Type": "MULTI_SELECT", "DisplayOptions": {"SelectAllOptions": {"Visibility": "VISIBLE"}, "TitleOptions": {"Visibility": "VISIBLE"}}}}}, "FilterId": "f-pri", "Column": {"DataSetIdentifier": "main", "ColumnName": "priority"},
@@ -62,6 +67,7 @@
         {"CrossSheet": {"FilterControlId": "fc-date", "SourceFilterId": "f-date"}},
         {"CrossSheet": {"FilterControlId": "fc-wl", "SourceFilterId": "f-wl"}},
         {"CrossSheet": {"FilterControlId": "fc-acct", "SourceFilterId": "f-acct"}},
+        {"CrossSheet": {"FilterControlId": "fc-region", "SourceFilterId": "f-region"}},
         {"CrossSheet": {"FilterControlId": "fc-pri", "SourceFilterId": "f-pri"}}
       ],
       "TextBoxes": [
@@ -118,16 +124,46 @@
               "Category": [{"CategoricalDimensionField": {"FieldId": "ov-pri-x", "Column": {"DataSetIdentifier": "main", "ColumnName": "priority"}}}],
               "Values": [{"CategoricalMeasureField": {"FieldId": "ov-pri-v", "Column": {"DataSetIdentifier": "main", "ColumnName": "executionid"}, "AggregationFunction": "DISTINCT_COUNT"}}]}},
             "DonutOptions": {"ArcOptions": {"ArcThickness": "MEDIUM"}}, "DataLabels": {"Visibility": "VISIBLE"}, "Legend": {"Visibility": "VISIBLE", "Position": "RIGHT"}},
-          "Actions": [{"CustomActionId": "ov-pri-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}}
+          "Actions": [{"CustomActionId": "ov-pri-act", "Name": "Cross-filter", "Status": "ENABLED", "Trigger": "DATA_POINT_CLICK", "ActionOperations": [{"FilterOperation": {"SelectedFieldsConfiguration": {"SelectedFieldOptions": "ALL_FIELDS"}, "TargetVisualsConfiguration": {"SameSheetTargetVisualConfiguration": {"TargetVisualOptions": "ALL_VISUALS"}}}}]}], "ColumnHierarchies": []}},
+
+        {"TableVisual": {"VisualId": "ov-coverage", "Title": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "Coverage — every deployed collector (account × Region)"}}, "Subtitle": {"Visibility": "VISIBLE", "FormatText": {"PlainText": "ACTIVE = Agent Spaces found · NO_AGENT_SPACES = collector idle · ERROR = last run failed · STALE = no run for more than 5 days"}},
+          "ChartConfiguration": {"FieldWells": {"TableUnaggregatedFieldWells": {"Values": [
+              {"FieldId": "cov-acct", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "accountid"}},
+              {"FieldId": "cov-rgn", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "region"}},
+              {"FieldId": "cov-health", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "health"}},
+              {"FieldId": "cov-spaces", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "agentspacecount"}},
+              {"FieldId": "cov-last", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "lastrunat"}},
+              {"FieldId": "cov-days", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "dayssincelastrun"}},
+              {"FieldId": "cov-ver", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "collectorversion"}},
+              {"FieldId": "cov-dlq", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "failedeventspending"}},
+              {"FieldId": "cov-repl", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "replicationfailures"}},
+              {"FieldId": "cov-nc", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "failedortimedout"}},
+              {"FieldId": "cov-err", "Column": {"DataSetIdentifier": "coverage", "ColumnName": "errormessage"}}]}},
+            "SortConfiguration": {"RowSort": [{"FieldSort": {"FieldId": "cov-health", "Direction": "ASC"}}, {"FieldSort": {"FieldId": "cov-acct", "Direction": "ASC"}}]},
+            "FieldOptions": {"SelectedFieldOptions": [
+              {"FieldId": "cov-acct", "CustomLabel": "Account", "Width": "130px"},
+              {"FieldId": "cov-rgn", "CustomLabel": "Region", "Width": "110px"},
+              {"FieldId": "cov-health", "CustomLabel": "Health", "Width": "130px"},
+              {"FieldId": "cov-spaces", "CustomLabel": "Agent Spaces", "Width": "100px"},
+              {"FieldId": "cov-last", "CustomLabel": "Last run (UTC)", "Width": "170px"},
+              {"FieldId": "cov-days", "CustomLabel": "Days since run", "Width": "110px"},
+              {"FieldId": "cov-ver", "CustomLabel": "Version", "Width": "80px"},
+              {"FieldId": "cov-dlq", "CustomLabel": "Failed events pending", "Width": "140px"},
+              {"FieldId": "cov-repl", "CustomLabel": "Replication failures", "Width": "140px"},
+              {"FieldId": "cov-nc", "CustomLabel": "Failed / timed-out investigations", "Width": "170px"},
+              {"FieldId": "cov-err", "CustomLabel": "Last error"}]},
+            "TableOptions": {"HeaderStyle": {"TextWrap": "WRAP"}, "CellStyle": {"TextWrap": "WRAP"}}},
+          "Actions": []}}
       ],
       "Layouts": [{"Configuration": {"GridLayout": {
         "CanvasSizeOptions": {"ScreenCanvasSizeOptions": {"ResizeOption": "FIXED", "OptimizedViewPortWidth": "1600px"}},
         "Elements": [
-          {"ElementId": "fc-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0,  "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-wl",   "ElementType": "FILTER_CONTROL", "ColumnIndex": 8,  "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 16, "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-pri",  "ElementType": "FILTER_CONTROL", "ColumnIndex": 24, "ColumnSpan": 6, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "ov-note", "ElementType": "TEXT_BOX",       "ColumnIndex": 30, "ColumnSpan": 6, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-wl", "ElementType": "FILTER_CONTROL", "ColumnIndex": 7, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 14, "ColumnSpan": 6, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-region", "ElementType": "FILTER_CONTROL", "ColumnIndex": 20, "ColumnSpan": 6, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-pri", "ElementType": "FILTER_CONTROL", "ColumnIndex": 26, "ColumnSpan": 5, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "ov-note", "ElementType": "TEXT_BOX", "ColumnIndex": 31, "ColumnSpan": 5, "RowIndex": 0, "RowSpan": 3},
           {"ElementId": "ov-kpi-count", "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
           {"ElementId": "ov-kpi-rr",    "ElementType": "VISUAL", "ColumnIndex": 7,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
           {"ElementId": "ov-kpi-mttr",  "ElementType": "VISUAL", "ColumnIndex": 14, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
@@ -137,7 +173,8 @@
           {"ElementId": "ov-volume",  "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11},
           {"ElementId": "ov-by-wl",   "ElementType": "VISUAL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11},
           {"ElementId": "ov-by-acct", "ElementType": "VISUAL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11},
-          {"ElementId": "ov-by-pri",  "ElementType": "VISUAL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11}
+          {"ElementId": "ov-by-pri",  "ElementType": "VISUAL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 19, "RowSpan": 11},
+          {"ElementId": "ov-coverage", "ElementType": "VISUAL", "ColumnIndex": 0, "ColumnSpan": 36, "RowIndex": 30, "RowSpan": 12}
         ]}}}]
     },
 
@@ -147,6 +184,7 @@
         {"CrossSheet": {"FilterControlId": "fc-eff-date", "SourceFilterId": "f-date"}},
         {"CrossSheet": {"FilterControlId": "fc-eff-wl", "SourceFilterId": "f-wl"}},
         {"CrossSheet": {"FilterControlId": "fc-eff-acct", "SourceFilterId": "f-acct"}},
+        {"CrossSheet": {"FilterControlId": "fc-eff-region", "SourceFilterId": "f-region"}},
         {"CrossSheet": {"FilterControlId": "fc-eff-pri", "SourceFilterId": "f-pri"}}
       ],
       "Visuals": [
@@ -242,10 +280,11 @@
       "Layouts": [{"Configuration": {"GridLayout": {
         "CanvasSizeOptions": {"ScreenCanvasSizeOptions": {"ResizeOption": "FIXED", "OptimizedViewPortWidth": "1600px"}},
         "Elements": [
-          {"ElementId": "fc-eff-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-eff-wl",   "ElementType": "FILTER_CONTROL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-eff-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-eff-pri",  "ElementType": "FILTER_CONTROL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-eff-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0, "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-eff-wl", "ElementType": "FILTER_CONTROL", "ColumnIndex": 8, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-eff-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 15, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-eff-region", "ElementType": "FILTER_CONTROL", "ColumnIndex": 22, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-eff-pri", "ElementType": "FILTER_CONTROL", "ColumnIndex": 29, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
           {"ElementId": "eff-p50", "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
           {"ElementId": "eff-p90", "ElementType": "VISUAL", "ColumnIndex": 7,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
           {"ElementId": "eff-max", "ElementType": "VISUAL", "ColumnIndex": 14, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
@@ -267,6 +306,7 @@
         {"CrossSheet": {"FilterControlId": "fc-inv-date", "SourceFilterId": "f-date"}},
         {"CrossSheet": {"FilterControlId": "fc-inv-wl", "SourceFilterId": "f-wl"}},
         {"CrossSheet": {"FilterControlId": "fc-inv-acct", "SourceFilterId": "f-acct"}},
+        {"CrossSheet": {"FilterControlId": "fc-inv-region", "SourceFilterId": "f-region"}},
         {"CrossSheet": {"FilterControlId": "fc-inv-pri", "SourceFilterId": "f-pri"}}
       ],
       "TextBoxes": [
@@ -300,6 +340,7 @@
               "GroupBy": [
                 {"CategoricalDimensionField": {"FieldId": "inv-a-date", "Column": {"DataSetIdentifier": "main", "ColumnName": "investigationdate"}}},
                 {"CategoricalDimensionField": {"FieldId": "inv-a-wl",   "Column": {"DataSetIdentifier": "main", "ColumnName": "workloadname"}}},
+                {"CategoricalDimensionField": {"FieldId": "inv-a-rgn",  "Column": {"DataSetIdentifier": "main", "ColumnName": "region"}}},
                 {"CategoricalDimensionField": {"FieldId": "inv-a-pri",  "Column": {"DataSetIdentifier": "main", "ColumnName": "priority"}}},
                 {"CategoricalDimensionField": {"FieldId": "inv-a-res",  "Column": {"DataSetIdentifier": "main", "ColumnName": "resolvedLabel"}}},
                 {"CategoricalDimensionField": {"FieldId": "inv-a-rc",   "Column": {"DataSetIdentifier": "main", "ColumnName": "rootcause"}}},
@@ -309,9 +350,10 @@
                 {"NumericalMeasureField": {"FieldId": "inv-a-dur",  "Column": {"DataSetIdentifier": "main", "ColumnName": "durationminutes"}, "AggregationFunction": {"SimpleNumericalAggregation": "MAX"}, "FormatConfiguration": {"FormatConfiguration": {"NumberDisplayFormatConfiguration": {"Suffix": " min", "DecimalPlacesConfiguration": {"DecimalPlaces": 1}}}}}},
                 {"NumericalMeasureField": {"FieldId": "inv-a-cost", "Column": {"DataSetIdentifier": "main", "ColumnName": "agentcostusd"}, "AggregationFunction": {"SimpleNumericalAggregation": "MAX"}, "FormatConfiguration": {"FormatConfiguration": {"CurrencyDisplayFormatConfiguration": {"Symbol": "USD", "DecimalPlacesConfiguration": {"DecimalPlaces": 2}}}}}}]}},
             "SortConfiguration": {"RowSort": [{"FieldSort": {"FieldId": "inv-a-date", "Direction": "DESC"}}]},
-            "FieldOptions": {"Order": ["inv-a-date", "inv-a-wl", "inv-a-pri", "inv-a-dur", "inv-a-res", "inv-a-rc", "inv-a-cost", "inv-a-url", "inv-a-id"], "SelectedFieldOptions": [
+            "FieldOptions": {"Order": ["inv-a-date", "inv-a-wl", "inv-a-rgn", "inv-a-pri", "inv-a-dur", "inv-a-res", "inv-a-rc", "inv-a-cost", "inv-a-url", "inv-a-id"], "SelectedFieldOptions": [
               {"FieldId": "inv-a-date", "CustomLabel": "Date", "Width": "110px"},
               {"FieldId": "inv-a-wl",   "CustomLabel": "Workload", "Width": "170px"},
+              {"FieldId": "inv-a-rgn",  "CustomLabel": "Region", "Width": "110px"},
               {"FieldId": "inv-a-pri",  "CustomLabel": "Priority", "Width": "100px"},
               {"FieldId": "inv-a-dur",  "CustomLabel": "Time to RCA", "Width": "110px"},
               {"FieldId": "inv-a-res",  "CustomLabel": "Resolved", "Width": "90px"},
@@ -371,10 +413,11 @@
       "Layouts": [{"Configuration": {"GridLayout": {
         "CanvasSizeOptions": {"ScreenCanvasSizeOptions": {"ResizeOption": "FIXED", "OptimizedViewPortWidth": "1600px"}},
         "Elements": [
-          {"ElementId": "fc-inv-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-inv-wl",   "ElementType": "FILTER_CONTROL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-inv-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-inv-pri",  "ElementType": "FILTER_CONTROL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-inv-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0, "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-inv-wl", "ElementType": "FILTER_CONTROL", "ColumnIndex": 8, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-inv-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 15, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-inv-region", "ElementType": "FILTER_CONTROL", "ColumnIndex": 22, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-inv-pri", "ElementType": "FILTER_CONTROL", "ColumnIndex": 29, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
           {"ElementId": "inv-note",     "ElementType": "TEXT_BOX", "ColumnIndex": 0, "ColumnSpan": 36, "RowIndex": 3,  "RowSpan": 2},
           {"ElementId": "inv-outliers", "ElementType": "VISUAL",   "ColumnIndex": 0, "ColumnSpan": 36, "RowIndex": 5,  "RowSpan": 8},
           {"ElementId": "inv-all",      "ElementType": "VISUAL",   "ColumnIndex": 0, "ColumnSpan": 36, "RowIndex": 13, "RowSpan": 12},
@@ -393,6 +436,7 @@
         {"CrossSheet": {"FilterControlId": "fc-cost-date", "SourceFilterId": "f-date"}},
         {"CrossSheet": {"FilterControlId": "fc-cost-wl", "SourceFilterId": "f-wl"}},
         {"CrossSheet": {"FilterControlId": "fc-cost-acct", "SourceFilterId": "f-acct"}},
+        {"CrossSheet": {"FilterControlId": "fc-cost-region", "SourceFilterId": "f-region"}},
         {"CrossSheet": {"FilterControlId": "fc-cost-pri", "SourceFilterId": "f-pri"}}
       ],
       "ParameterControls": [
@@ -474,10 +518,11 @@
       "Layouts": [{"Configuration": {"GridLayout": {
         "CanvasSizeOptions": {"ScreenCanvasSizeOptions": {"ResizeOption": "FIXED", "OptimizedViewPortWidth": "1600px"}},
         "Elements": [
-          {"ElementId": "fc-cost-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-cost-wl",   "ElementType": "FILTER_CONTROL", "ColumnIndex": 9,  "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-cost-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 18, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
-          {"ElementId": "fc-cost-pri",  "ElementType": "FILTER_CONTROL", "ColumnIndex": 27, "ColumnSpan": 9, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-cost-date", "ElementType": "FILTER_CONTROL", "ColumnIndex": 0, "ColumnSpan": 8, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-cost-wl", "ElementType": "FILTER_CONTROL", "ColumnIndex": 8, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-cost-acct", "ElementType": "FILTER_CONTROL", "ColumnIndex": 15, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-cost-region", "ElementType": "FILTER_CONTROL", "ColumnIndex": 22, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
+          {"ElementId": "fc-cost-pri", "ElementType": "FILTER_CONTROL", "ColumnIndex": 29, "ColumnSpan": 7, "RowIndex": 0, "RowSpan": 3},
           {"ElementId": "c-kpi-total", "ElementType": "VISUAL", "ColumnIndex": 0,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
           {"ElementId": "c-kpi-avg",   "ElementType": "VISUAL", "ColumnIndex": 7,  "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},
           {"ElementId": "c-kpi-max",   "ElementType": "VISUAL", "ColumnIndex": 14, "ColumnSpan": 7, "RowIndex": 3, "RowSpan": 5},

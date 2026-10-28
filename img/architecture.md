@@ -1,77 +1,16 @@
 # Architecture Diagram
 
-`architecture.png` must be generated from `architecture.svg` in this directory.
-The SVG is the source of truth — edit it, then re-export.
+The architecture diagram is maintained **inline in the repository [`README.md`](../README.md#architecture)** as a [Mermaid](https://mermaid.js.org/) flowchart — GitHub renders it automatically, so there is no exported image to keep in sync. This file is the **maintenance spec** for that diagram: when you edit the Mermaid block in the README, keep it consistent with the requirements below.
 
-## Flow
+## What the diagram must show
 
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│                        Workload Account(s)  1..N                      │
-│                                                                       │
-│   ┌──────────────┐      ┌───────────────┐      ┌──────────────────┐   │
-│   │ DevOps Agent │─────▶│  EventBridge  │─────▶│  Lambda          │   │
-│   │ (AgentSpace) │      │  Rule         │      │  Investigation   │   │
-│   └──────────────┘      │ "Investigation│      │  Collector       │   │
-│          ▲              │   Completed"  │      └────────┬─────────┘   │
-│          │              └───────────────┘               │             │
-│          │  ListJournalRecords / ListExecutions         │             │
-│          └───────────────────────────────────────────────┘             │
-│                                                         │             │
-│                                                         ▼             │
-│                                       ┌───────────────────────────┐   │
-│                                       │  S3 Collection Bucket     │   │
-│                                       │  (versioned, SSE-S3)      │   │
-│                                       │  ...-<account>-<region>   │───┼──┐
-│                                       └───────────────────────────┘   │  │
-└───────────────────────────────────────────────────────────────────────┘  │
-                                                                          │
-              S3 Replication  (cross-ACCOUNT, same region)                │
-                                                                          │
-┌───────────────────────────────────────────────────────────────────────┐  │
-│                          Dashboard Account                            │  │
-│                                                                       │  │
-│   ┌───────────────────────────┐                                       │  │
-│   │  S3 Centralized Bucket    │◀──────────────────────────────────────┼──┘
-│   │  (SSE-S3, 3-yr retention) │                                       │
-│   └─────────────┬─────────────┘                                       │
-│                 ▼                                                     │
-│   ┌───────────────────────────┐    ┌───────────────────────────────┐  │
-│   │  AWS Glue Crawler         │───▶│  Glue Data Catalog            │  │
-│   │  (every 30 min)           │    │  investigations_v2            │  │
-│   └───────────────────────────┘    │  part: account_id,            │  │
-│                                    │        agentspace_id          │  │
-│                                    └───────────────┬───────────────┘  │
-│                                                    ▼                  │
-│                                    ┌───────────────────────────────┐  │
-│                                    │  Amazon Athena                │  │
-│                                    └───────────────┬───────────────┘  │
-│                                                    ▼                  │
-│                                    ┌───────────────────────────────┐  │
-│                                    │  Amazon QuickSight            │  │
-│                                    │  4-sheet analysis             │  │
-│                                    └───────────────────────────────┘  │
-└───────────────────────────────────────────────────────────────────────┘
-```
-
-## Notes for whoever regenerates this
-
-- Replication is **cross-account, same-region** — not cross-region. Earlier drafts of this
-  diagram said "Cross-Region Replication", which was wrong.
-- There is **no mitigation collector**. Mitigation tracking was removed from scope; earlier
-  drafts showed a second Lambda and EventBridge rule that do not exist in the templates.
-- The Lambda calls back into the DevOps Agent API (`ListJournalRecords`, `ListExecutions`)
-  to derive Time to RCA — the event alone is not sufficient, and `event.time` is
-  deliberately ignored.
-- S3 object key is `investigations-v2/account_id=<id>/agentspace_id=<id>/<executionId>.json`
-  — no date in the path, by design (see implementation guide).
-- Deployment order is Dashboard Account first, then workload accounts. The arrows show data
-  flow, not deployment order.
-- The diagram shows **one Region**. An Agent Space monitors its accounts' resources across all
-  Regions, so the Region drawn here is the Region the Agent Spaces live in — not the Regions the
-  investigated workloads run in. Multi-Region aggregation is not implemented.
-- QuickSight shows a **4-sheet analysis** (Overview, Effectiveness, Investigations,
-  Cost & Recommendations). Earlier drafts said 5 sheets.
-- There are **two** collector Lambdas in each workload account: the investigation collector
-  (EventBridge-driven) and the recommendation collector (weekly schedule). Earlier drafts of this
-  diagram showed only one.
+- **Two kinds of Region.** Workload-side boxes are per workload account × Agent Space Region. The dashboard side is in exactly one analytics Region. Label both so a reader cannot assume everything is in one Region.
+- **Replication is cross-account, and cross-Region where the collector and dashboard Regions differ.** One arrow style is fine; its label must say both.
+- **Two Lambda functions per collection stack:** the investigation collector (EventBridge-driven) and the inventory collector (every 2 days).
+- **The failed-events queue** receives failed invocations from both functions and events EventBridge could not deliver.
+- **Glue tables are declared by the dashboard stack.** There is no Glue crawler.
+- **The collection stack can be deployed by a StackSet** across an organization, or per account.
+- **QuickSight** shows a published dashboard: Overview (including the Coverage table), Effectiveness, Investigations, Cost & Recommendations.
+- **No mitigation collector.** Mitigation data is out of scope.
+- Arrows show data flow, not deployment order. Deployment order is: dashboard stack, QuickSight setup, collection stacks, backfill.
+- The workload-side Region is where the **Agent Spaces** live, not the Regions of the investigated workloads.

@@ -1,0 +1,368 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  DevOps Agent Operations Dashboard - Dashboard stack (v1.0.0). Deploy once, in a
+  dedicated dashboard account, in the Region chosen as the analytics Region.
+  Collection stacks in any account and Region replicate into its bucket.
+  QuickSight resources are created by scripts/setup-dashboard.sh.
+
+Parameters:
+  OrganizationIds:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^o-[a-z0-9]{10,32}(,o-[a-z0-9]{10,32})*$'
+    Description: >
+      Recommended. Comma-separated AWS Organizations IDs (o-xxxxxxxxxx) whose accounts
+      may replicate into the dashboard bucket. New accounts need no stack update.
+  WorkloadAccountIds:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^\d{12}(,\d{12})*$'
+    Description: >
+      Optional. Comma-separated account IDs allowed to replicate. Use when you do not
+      use AWS Organizations; this list must be updated for every new account.
+  QuickSightServiceRoleName:
+    Type: String
+    Default: aws-quicksight-service-role-v0
+    Description: Name of the existing QuickSight service role.
+  GlueDatabaseName:
+    Type: String
+    Default: devops_agent_dashboard
+    AllowedPattern: '^[a-z0-9_]{1,255}$'
+    Description: Glue / Athena database name.
+  DataRetentionDays:
+    Type: Number
+    Default: 1095
+    MinValue: 1
+    Description: >
+      Retention of records in the dashboard bucket (default 3 years). Caps how far back
+      trends reach. Independent of the collection buckets' retention.
+  AthenaResultsRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    Description: Retention of Athena query results.
+
+Rules:
+  AtLeastOneAllowedSource:
+    Assertions:
+      - Assert: !Not [!And [!Equals [!Ref OrganizationIds, ""], !Equals [!Ref WorkloadAccountIds, ""]]]
+        AssertDescription: Set OrganizationIds, WorkloadAccountIds, or both.
+
+Conditions:
+  HasOrganizations: !Not [!Equals [!Ref OrganizationIds, ""]]
+  HasAccounts: !Not [!Equals [!Ref WorkloadAccountIds, ""]]
+
+Resources:
+
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "devops-agent-dashboard-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled   # required for a replication destination
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      # All four settings on. The bucket policy grants only to fixed principals
+      # (listed accounts) or a fixed aws:PrincipalOrgID, which S3 treats as
+      # non-public, so Block Public Access does not reject it.
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldData
+            Status: Enabled
+            ExpirationInDays: !Ref DataRetentionDays
+      Tags:
+        - {Key: Project, Value: devops-agent-dashboard}
+
+  # Replication permissions for the source accounts, per the S3 cross-account
+  # replication guidance. Authorizes accounts (or organizations), not roles or
+  # Regions: no workload resource has to exist first, and one allowed account
+  # can replicate from every Region it runs a collector in.
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - !If
+            - HasOrganizations
+            - Sid: ReplicateObjectsFromOrganizations
+              Effect: Allow
+              Principal: "*"
+              Action: [s3:ReplicateObject, s3:ReplicateDelete, s3:ReplicateTags, s3:ObjectOwnerOverrideToBucketOwner]
+              Resource: !Sub "${DashboardBucket.Arn}/*"
+              Condition:
+                StringEquals: {aws:PrincipalOrgID: !Split [",", !Ref OrganizationIds]}
+            - !Ref AWS::NoValue
+          - !If
+            - HasOrganizations
+            - Sid: ReplicationBucketChecksFromOrganizations
+              Effect: Allow
+              Principal: "*"
+              Action: [s3:List*, s3:GetBucketVersioning, s3:PutBucketVersioning]
+              Resource: !GetAtt DashboardBucket.Arn
+              Condition:
+                StringEquals: {aws:PrincipalOrgID: !Split [",", !Ref OrganizationIds]}
+            - !Ref AWS::NoValue
+          - !If
+            - HasAccounts
+            - Sid: ReplicateObjectsFromAccounts
+              Effect: Allow
+              Principal: {AWS: !Split [",", !Ref WorkloadAccountIds]}
+              Action: [s3:ReplicateObject, s3:ReplicateDelete, s3:ReplicateTags, s3:ObjectOwnerOverrideToBucketOwner]
+              Resource: !Sub "${DashboardBucket.Arn}/*"
+            - !Ref AWS::NoValue
+          - !If
+            - HasAccounts
+            - Sid: ReplicationBucketChecksFromAccounts
+              Effect: Allow
+              Principal: {AWS: !Split [",", !Ref WorkloadAccountIds]}
+              Action: [s3:List*, s3:GetBucketVersioning, s3:PutBucketVersioning]
+              Resource: !GetAtt DashboardBucket.Arn
+            - !Ref AWS::NoValue
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt DashboardBucket.Arn, !Sub "${DashboardBucket.Arn}/*"]
+            Condition:
+              Bool: {aws:SecureTransport: "false"}
+
+  AthenaResultsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "devops-agent-athena-results-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireResults
+            Status: Enabled
+            ExpirationInDays: !Ref AthenaResultsRetentionDays
+      Tags:
+        - {Key: Project, Value: devops-agent-dashboard}
+
+  AthenaResultsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AthenaResultsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource: [!GetAtt AthenaResultsBucket.Arn, !Sub "${AthenaResultsBucket.Arn}/*"]
+            Condition:
+              Bool: {aws:SecureTransport: "false"}
+
+  # A dedicated workgroup pins results to the solution bucket. The account's
+  # `primary` workgroup has no output location in an account that never used
+  # Athena, which would break every query.
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "devops-agent-${AWS::AccountId}"
+      Description: Query workgroup for the DevOps Agent operations dashboard
+      State: ENABLED
+      RecursiveDeleteOption: true
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        PublishCloudWatchMetricsEnabled: true
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${AthenaResultsBucket}/query-results/"
+          EncryptionConfiguration: {EncryptionOption: SSE_S3}
+      Tags:
+        - {Key: Project, Value: devops-agent-dashboard}
+
+  # ---------------------------------------------------------------------------
+  # Glue tables are declared here, not discovered by a crawler. The tables exist
+  # from day one, so QuickSight can be set up before any data arrives, and the
+  # schema is a fixed contract. Tables are not partitioned: Athena reads every
+  # object under each LOCATION, so records from a new account, Region, or Agent
+  # Space are queryable as soon as they replicate. Record fields carry the
+  # account and Region, so no partition columns are needed.
+  # ---------------------------------------------------------------------------
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref GlueDatabaseName
+        Description: DevOps Agent operations dashboard
+
+  InvestigationsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: investigations_v2
+        Description: One record per DevOps Agent investigation
+        TableType: EXTERNAL_TABLE
+        Parameters: {classification: json}
+        StorageDescriptor:
+          Location: !Sub "s3://${DashboardBucket}/investigations-v2/"
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters: {ignore.malformed.json: "true"}
+          Columns:
+            - {Name: executionid, Type: string}
+            - {Name: taskid, Type: string}
+            - {Name: agentspaceid, Type: string}
+            - {Name: workloadname, Type: string}
+            - {Name: accountid, Type: string}
+            - {Name: agentspaceregion, Type: string}
+            - {Name: status, Type: string}
+            - {Name: priority, Type: string}
+            - {Name: collectorversion, Type: string}
+            - {Name: investigationstartedat, Type: string}
+            - {Name: investigationcompletedat, Type: string}
+            - {Name: durationminutes, Type: double}
+            - {Name: investigationdate, Type: string}
+            - {Name: investigationmonth, Type: string}
+            - {Name: resolved, Type: boolean}
+            - {Name: consoleurl, Type: string}
+            - {Name: symptoms, Type: array<string>}
+            - {Name: rootcause, Type: string}
+            - {Name: rootcausedescription, Type: string}
+            - {Name: causes, Type: array<string>}
+            - {Name: gaps, Type: array<string>}
+            - {Name: relatedresources, Type: array<string>}
+            - {Name: symptomcount, Type: int}
+            - {Name: causecount, Type: int}
+            - {Name: gapcount, Type: int}
+            - {Name: resourcecount, Type: int}
+            - {Name: contextwindowutilization, Type: double}
+            - {Name: compactioncount, Type: int}
+            - {Name: subagentsused, Type: array<string>}
+            - {Name: subagentcount, Type: int}
+            - {Name: totaltoolcalls, Type: int}
+            - {Name: agentcostusd, Type: double}
+
+  RecommendationsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: recommendations_v1
+        Description: Current DevOps Agent recommendations, one object per Agent Space
+        TableType: EXTERNAL_TABLE
+        Parameters: {classification: json}
+        StorageDescriptor:
+          Location: !Sub "s3://${DashboardBucket}/recommendations-v1/"
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters: {ignore.malformed.json: "true"}
+          Columns:
+            - {Name: accountid, Type: string}
+            - {Name: agentspaceregion, Type: string}
+            - {Name: agentspaceid, Type: string}
+            - {Name: workloadname, Type: string}
+            - {Name: collected_at, Type: string}
+            - {Name: recommendationid, Type: string}
+            - {Name: title, Type: string}
+            - {Name: status, Type: string}
+            - {Name: priority, Type: string}
+            - {Name: taskid, Type: string}
+
+  CollectorStatusTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: collector_status
+        Description: One status record per collection stack (account x Region)
+        TableType: EXTERNAL_TABLE
+        Parameters: {classification: json}
+        StorageDescriptor:
+          Location: !Sub "s3://${DashboardBucket}/collector-status/"
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters: {ignore.malformed.json: "true"}
+          Columns:
+            - {Name: accountid, Type: string}
+            - {Name: agentspaceregion, Type: string}
+            - {Name: status, Type: string}
+            - {Name: agentspacecount, Type: int}
+            - {Name: recommendationcount, Type: int}
+            - {Name: removedagentspaces, Type: int}
+            - {Name: lastrunat, Type: string}
+            - {Name: collectorversion, Type: string}
+            - {Name: errormessage, Type: string}
+            - {Name: replicationfailures, Type: int}
+            - {Name: failedeventspending, Type: int}
+
+  QuickSightServicePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "DevOpsAgentDashboardAccess-${AWS::AccountId}"
+      Roles: [!Ref QuickSightServiceRoleName]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: S3Read
+            Effect: Allow
+            Action: [s3:GetObject, s3:ListBucket, s3:GetBucketLocation]
+            Resource:
+              - !GetAtt DashboardBucket.Arn
+              - !Sub "${DashboardBucket.Arn}/*"
+              - !GetAtt AthenaResultsBucket.Arn
+              - !Sub "${AthenaResultsBucket.Arn}/*"
+          - Sid: AthenaResultsWrite
+            Effect: Allow
+            Action: [s3:PutObject, s3:AbortMultipartUpload]
+            Resource: !Sub "${AthenaResultsBucket.Arn}/*"
+          - Sid: Athena
+            Effect: Allow
+            Action: [athena:StartQueryExecution, athena:GetQueryExecution, athena:GetQueryResults, athena:StopQueryExecution, athena:GetWorkGroup]
+            Resource: !Sub "arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkGroup}"
+          - Sid: GlueCatalogRead
+            Effect: Allow
+            Action: [glue:GetDatabase, glue:GetDatabases, glue:GetTable, glue:GetTables, glue:GetPartition, glue:GetPartitions, glue:BatchGetPartition]
+            Resource:
+              - !Sub "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+              - !Sub "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${GlueDatabaseName}"
+              - !Sub "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${GlueDatabaseName}/*"
+
+Outputs:
+  DashboardBucketName:
+    Description: Pass as DashboardBucketName to every collection stack.
+    Value: !Ref DashboardBucket
+  DashboardAccountId:
+    Description: Pass as DashboardAccountId to every collection stack.
+    Value: !Ref AWS::AccountId
+  AnalyticsRegion:
+    Description: Region of the dashboard, Athena, and QuickSight resources.
+    Value: !Ref AWS::Region
+  AthenaWorkGroupName:
+    Value: !Ref AthenaWorkGroup
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase

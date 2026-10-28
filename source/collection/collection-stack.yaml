@@ -1,0 +1,732 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  DevOps Agent Operations Dashboard - Collection stack (v1.0.0). Deploy once per
+  workload account, in each Region that holds (or may hold) DevOps Agent Agent
+  Spaces, directly or through a CloudFormation StackSet. Collects investigations,
+  recommendations, and collector status, and replicates them to the dashboard bucket.
+
+Parameters:
+  DashboardAccountId:
+    Type: String
+    AllowedPattern: '^\d{12}$'
+    Description: AWS account ID of the centralized dashboard account.
+  DashboardBucketName:
+    Type: String
+    Description: >
+      Dashboard bucket (devops-agent-dashboard-<dashboard-account-id>). It may be in
+      another Region; S3 resolves the destination Region from the bucket.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653]
+    Description: CloudWatch Logs retention for both collector functions, in days.
+  DataRetentionDays:
+    Type: Number
+    Default: 365
+    MinValue: 1
+    Description: >
+      Retention of records in this account's staging bucket. The dashboard bucket
+      keeps its own, independent retention.
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # Staging bucket. Names that must be globally unique carry the Region so the
+  # stack can be deployed in several Regions of one account (and by StackSets).
+  # ---------------------------------------------------------------------------
+  CollectionBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "devops-agent-collection-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled   # required for replication
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldData
+            Status: Enabled
+            ExpirationInDays: !Ref DataRetentionDays
+      # Destination is named by bucket only, so the same rules serve same-Region
+      # and cross-Region delivery. Filter-based rules need explicit Priority and
+      # DeleteMarkerReplication. Delete markers replicate so a removed record
+      # (for example, recommendations of a deleted Agent Space) disappears from
+      # the dashboard too.
+      ReplicationConfiguration:
+        Role: !GetAtt ReplicationRole.Arn
+        Rules:
+          - Id: ReplicateInvestigations
+            Status: Enabled
+            Priority: 1
+            Filter: {Prefix: "investigations-v2/"}
+            DeleteMarkerReplication: {Status: Enabled}
+            Destination:
+              Bucket: !Sub "arn:${AWS::Partition}:s3:::${DashboardBucketName}"
+              Account: !Ref DashboardAccountId
+              AccessControlTranslation: {Owner: Destination}
+          - Id: ReplicateRecommendations
+            Status: Enabled
+            Priority: 2
+            Filter: {Prefix: "recommendations-v1/"}
+            DeleteMarkerReplication: {Status: Enabled}
+            Destination:
+              Bucket: !Sub "arn:${AWS::Partition}:s3:::${DashboardBucketName}"
+              Account: !Ref DashboardAccountId
+              AccessControlTranslation: {Owner: Destination}
+          - Id: ReplicateCollectorStatus
+            Status: Enabled
+            Priority: 3
+            Filter: {Prefix: "collector-status/"}
+            DeleteMarkerReplication: {Status: Enabled}
+            Destination:
+              Bucket: !Sub "arn:${AWS::Partition}:s3:::${DashboardBucketName}"
+              Account: !Ref DashboardAccountId
+              AccessControlTranslation: {Owner: Destination}
+      Tags:
+        - {Key: Project, Value: devops-agent-dashboard}
+
+  CollectionBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CollectionBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt CollectionBucket.Arn
+              - !Sub "${CollectionBucket.Arn}/*"
+            Condition:
+              Bool: {aws:SecureTransport: "false"}
+
+  # ---------------------------------------------------------------------------
+  # IAM. IAM names are global per account, so every role name carries the
+  # Region. One role per function (least privilege).
+  # ---------------------------------------------------------------------------
+  ReplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "devops-agent-replication-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: s3.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: Replication
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The bucket is referenced by constructed name, not !GetAtt: the
+              # bucket's ReplicationConfiguration references this role, so a
+              # reference back would be circular.
+              - Effect: Allow
+                Action: [s3:GetReplicationConfiguration, s3:ListBucket]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::devops-agent-collection-${AWS::AccountId}-${AWS::Region}"
+              - Effect: Allow
+                Action: [s3:GetObjectVersionForReplication, s3:GetObjectVersionAcl, s3:GetObjectVersionTagging]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::devops-agent-collection-${AWS::AccountId}-${AWS::Region}/*"
+              - Effect: Allow
+                Action: [s3:ReplicateObject, s3:ReplicateDelete, s3:ReplicateTags, s3:ObjectOwnerOverrideToBucketOwner]
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${DashboardBucketName}/*"
+
+  CollectorRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      # aidevops: is the AWS DevOps Agent IAM prefix; newer than cfn-lint's bundled service list (W3037 false positive).
+      cfn-lint: { config: { ignore_checks: [W3037] } }
+    Properties:
+      RoleName: !Sub "devops-agent-collector-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: InvestigationCollector
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${CollectionBucket.Arn}/investigations-v2/*"
+              - Sid: DevOpsAgentRead   # Read/List only
+                Effect: Allow
+                Action: [aidevops:GetAgentSpace, aidevops:ListJournalRecords]
+                Resource: !Sub "arn:${AWS::Partition}:aidevops:${AWS::Region}:${AWS::AccountId}:agentspace/*"
+              - Sid: OnFailureDestination
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt FailedEventsQueue.Arn
+
+  InventoryRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      # aidevops: is the AWS DevOps Agent IAM prefix; newer than cfn-lint's bundled service list (W3037 false positive).
+      cfn-lint: { config: { ignore_checks: [W3037] } }
+    Properties:
+      RoleName: !Sub "devops-agent-inventory-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: InventoryCollector
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  - !Sub "${CollectionBucket.Arn}/recommendations-v1/*"
+                  - !Sub "${CollectionBucket.Arn}/collector-status/*"
+              - Sid: RemoveRecommendationsOfDeletedAgentSpaces
+                Effect: Allow
+                Action: s3:DeleteObject
+                Resource: !Sub "${CollectionBucket.Arn}/recommendations-v1/*"
+              - Sid: ReplicationHealthCheck   # ListBucket + HeadObject on own objects
+                Effect: Allow
+                Action: [s3:ListBucket, s3:GetObject]
+                Resource:
+                  - !GetAtt CollectionBucket.Arn
+                  - !Sub "${CollectionBucket.Arn}/*"
+              - Sid: DevOpsAgentDiscovery   # no resource type exists for ListAgentSpaces
+                Effect: Allow
+                Action: aidevops:ListAgentSpaces
+                Resource: "*"
+              - Sid: DevOpsAgentRead   # Read/List only
+                Effect: Allow
+                Action: [aidevops:GetAgentSpace, aidevops:ListGoals, aidevops:ListRecommendations]
+                Resource: !Sub "arn:${AWS::Partition}:aidevops:${AWS::Region}:${AWS::AccountId}:agentspace/*"
+              - Sid: FailedEventsQueue   # destination + depth reporting
+                Effect: Allow
+                Action: [sqs:SendMessage, sqs:GetQueueAttributes]
+                Resource: !GetAtt FailedEventsQueue.Arn
+
+  # ---------------------------------------------------------------------------
+  # Failed-event queue. Receives (a) invocations that still fail after Lambda's
+  # retries, from both functions, and (b) events EventBridge could not deliver.
+  # Its depth is reported in the collector status record. Drain it with
+  # scripts/redrive.sh after fixing the cause.
+  # ---------------------------------------------------------------------------
+  FailedEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: devops-agent-failed-events
+      MessageRetentionPeriod: 1209600   # 14 days, the SQS maximum
+      SqsManagedSseEnabled: true
+      Tags:
+        - {Key: Project, Value: devops-agent-dashboard}
+
+  FailedEventsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref FailedEventsQueue]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EventBridgeDeadLetter
+            Effect: Allow
+            Principal: {Service: events.amazonaws.com}
+            Action: sqs:SendMessage
+            Resource: !GetAtt FailedEventsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  - !GetAtt InvestigationEventRule.Arn
+                  - !GetAtt InventoryScheduleRule.Arn
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "sqs:*"
+            Resource: !GetAtt FailedEventsQueue.Arn
+            Condition:
+              Bool: {aws:SecureTransport: "false"}
+
+  # ---------------------------------------------------------------------------
+  # Investigation collector. Code is inline and this is the only copy.
+  # ---------------------------------------------------------------------------
+  CollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/devops-agent-investigation-collector
+      RetentionInDays: !Ref LogRetentionDays
+
+  CollectorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: CollectorLogGroup
+    Metadata:
+      # python3.14 is GA on Amazon Linux 2023; cfn-lint's bundled runtime list lags (E3030 false positive).
+      # Verified: https://docs.aws.amazon.com/lambda/latest/dg/lambda-python.html
+      cfn-lint: { config: { ignore_checks: [E3030] } }
+    Properties:
+      FunctionName: devops-agent-investigation-collector
+      Description: Writes one record per DevOps Agent investigation (completed, failed, timed out).
+      Runtime: python3.14
+      Handler: index.handler
+      Role: !GetAtt CollectorRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          COLLECTION_BUCKET: !Ref CollectionBucket
+          ACCOUNT_ID: !Ref AWS::AccountId
+          SOLUTION_VERSION: "1.0.0"
+      Code:
+        ZipFile: |
+          import json
+          import os
+          from datetime import timezone
+
+          import boto3
+          from botocore.config import Config
+
+          # Adaptive retries absorb DevOps Agent / S3 throttling.
+          CFG = Config(retries={'total_max_attempts': 10, 'mode': 'adaptive'})
+          s3 = boto3.client('s3', config=CFG)
+          agent = boto3.client('devops-agent', config=CFG)
+          BUCKET = os.environ['COLLECTION_BUCKET']
+          ACCOUNT_ID = os.environ['ACCOUNT_ID']
+          VERSION = os.environ['SOLUTION_VERSION']
+          # Region of this stack = Region of the Agent Space. Not the Region of
+          # the investigated resources.
+          REGION = os.environ['AWS_REGION']
+          NOT_COMPLETED = {'Investigation Failed': 'FAILED', 'Investigation Timed Out': 'TIMED_OUT'}
+
+
+          class NoInvestigationSummary(Exception):
+              """Completed investigation without an investigation_summary record."""
+
+
+          def resolve_workload_name(info):
+              # workload tag -> Agent Space name -> 'unknown'
+              tag = ((info.get('tags') or {}).get('workload') or '').strip()
+              if tag:
+                  return tag
+              return ((info.get('agentSpace') or {}).get('name') or '').strip() or 'unknown'
+
+
+          def record_key(agent_space_id, record_id):
+              # PRIMARY-KEY INVARIANT: only immutable identifiers. Never add a
+              # computed or mutable value (date, workload, priority): two runs
+              # that derive it differently would store one investigation twice.
+              return (f"investigations-v2/account_id={ACCOUNT_ID}/region={REGION}/"
+                      f"agentspace_id={agent_space_id}/{record_id}.json")
+
+
+          def console_url(agent_space_id, execution_id):
+              return (f"https://{REGION}.console.aws.amazon.com/devops-agent/home?region={REGION}"
+                      f"#/agentspaces/{agent_space_id}/executions/{execution_id}")
+
+
+          def iso(ts):
+              return ts.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+          def parse_content(record):
+              content = record.get('content')
+              if isinstance(content, str):
+                  return json.loads(content)
+              return content if isinstance(content, dict) else None
+
+
+          def journal(agent_space_id, execution_id):
+              records, token = [], None
+              while True:
+                  params = {'agentSpaceId': agent_space_id, 'executionId': execution_id, 'limit': 100}
+                  if token:
+                      params['nextToken'] = token
+                  resp = agent.list_journal_records(**params)   # errors propagate -> retry/DLQ
+                  records.extend(resp.get('records', []))
+                  token = resp.get('nextToken')
+                  if not token:
+                      return records
+
+
+          def handler(event, context):
+              detail = event.get('detail', {})
+              meta, data = detail.get('metadata', {}), detail.get('data', {})
+              agent_space_id = meta.get('agent_space_id')
+              execution_id, task_id = meta.get('execution_id'), meta.get('task_id')
+              if not agent_space_id or not (execution_id or task_id):
+                  raise ValueError(f"event lacks agent_space_id and execution/task id: {json.dumps(detail)[:500]}")
+              status = data.get('status') or NOT_COMPLETED.get(event.get('detail-type', ''), 'COMPLETED')
+              priority = data.get('priority') or 'MEDIUM'
+
+              try:
+                  info = agent.get_agent_space(agentSpaceId=agent_space_id)
+              except Exception as e:   # label only; the record is still written
+                  print(f"WARNING: GetAgentSpace failed for {agent_space_id}: {e}")
+                  info = {}
+              base = {
+                  'executionId': execution_id or '', 'taskId': task_id or '',
+                  'agentSpaceId': agent_space_id, 'workloadName': resolve_workload_name(info),
+                  'accountId': ACCOUNT_ID, 'agentSpaceRegion': REGION,
+                  'status': status, 'priority': priority, 'collectorVersion': VERSION,
+              }
+
+              if status != 'COMPLETED':
+                  # Failed / timed out: status only. The event's updated_at dates it.
+                  when = data.get('updated_at') or event.get('time') or ''
+                  record = dict(base, investigationCompletedAt=when, investigationDate=when[:10],
+                                investigationMonth=when[:7], resolved=False,
+                                consoleUrl=console_url(agent_space_id, execution_id) if execution_id else '',
+                                symptoms=[], causes=[], gaps=[], relatedResources=[],
+                                symptomCount=0, causeCount=0, gapCount=0, resourceCount=0)
+                  key = record_key(agent_space_id, execution_id or f"task-{task_id}")
+                  s3.put_object(Bucket=BUCKET, Key=key, Body=json.dumps(record), ContentType='application/json')
+                  print(f"Collected {status}: {key}")
+                  return {'statusCode': 200, 'key': key, 'status': status}
+
+              if not execution_id:
+                  raise ValueError(f"completed investigation without execution_id (task {task_id})")
+
+              summary = summary_at = utilization = None
+              stamps = []
+              for rec in journal(agent_space_id, execution_id):
+                  kind, created = rec.get('recordType', ''), rec.get('createdAt')
+                  if created:
+                      stamps.append(created)
+                  try:
+                      if kind == 'investigation_summary':
+                          summary, summary_at = parse_content(rec), created
+                      elif kind == 'utilization':
+                          parsed = parse_content(rec)
+                          # keep the most complete (highest context-window) record
+                          new = (parsed or {}).get('data', {}).get('context_window', {}).get('utilization', 0.0)
+                          old = (utilization or {}).get('data', {}).get('context_window', {}).get('utilization', 0.0)
+                          if parsed and new >= old:
+                              utilization = parsed
+                  except (ValueError, TypeError) as e:
+                      print(f"WARNING: unparseable {kind} record in {execution_id}: {e}")
+              if not summary or not summary_at:
+                  raise NoInvestigationSummary(f"no investigation_summary for {execution_id}")
+
+              # Time to RCA from immutable journal timestamps only: earliest
+              # record -> investigation_summary. event.time is not used, so live
+              # capture and backfill produce identical records.
+              started = min(stamps) if stamps else None
+              minutes = round((summary_at - started).total_seconds() / 60.0, 1) if started else 0.0
+              minutes = max(minutes, 0.0)
+              completed = iso(summary_at)
+
+              findings = summary.get('findings', [])
+              root = next((f for f in findings if f.get('type') == 'root_cause'), None)
+              causes = [f.get('title', '') for f in findings if f is not root and f.get('title')]
+              if root is None and causes:   # no explicit root cause: promote the first cause
+                  title = causes.pop(0)
+                  root = next((f for f in findings if f.get('title') == title), {})
+              root = root or {}
+              related = list(root.get('related_resources', []))
+              if not related:
+                  for item in findings + summary.get('symptoms', []):
+                      related.extend(item.get('related_resources', []))
+                  related = sorted(set(related))
+              symptoms = [s.get('title', '') for s in summary.get('symptoms', []) if s.get('title')]
+              gaps = [g.get('title', '') for g in summary.get('investigation_gaps', []) if g.get('title')]
+
+              u = (utilization or {}).get('data', {})
+              subagents = [sa.get('id', '') for sa in u.get('subagents', [])]
+              record = dict(
+                  base,
+                  investigationStartedAt=iso(started) if started else '',
+                  investigationCompletedAt=completed,
+                  durationMinutes=minutes,
+                  investigationDate=completed[:10], investigationMonth=completed[:7],
+                  resolved=any(f.get('type') == 'root_cause' for f in findings),
+                  consoleUrl=console_url(agent_space_id, execution_id),
+                  symptoms=symptoms, rootCause=root.get('title', ''),
+                  rootCauseDescription=root.get('description', ''),
+                  causes=causes, gaps=gaps, relatedResources=related,
+                  symptomCount=len(symptoms), causeCount=len(causes),
+                  gapCount=len(gaps), resourceCount=len(related),
+                  contextWindowUtilization=u.get('context_window', {}).get('utilization', 0.0),
+                  compactionCount=u.get('context_window', {}).get('compaction_count', 0),
+                  subagentsUsed=subagents, subagentCount=len(subagents),
+                  totalToolCalls=sum(t.get('tool_use_count', 0) for t in u.get('tools', [])),
+                  agentCostUsd=round(minutes * 60 * 0.0083, 2),
+              )
+              key = record_key(agent_space_id, execution_id)
+              s3.put_object(Bucket=BUCKET, Key=key, Body=json.dumps(record, default=str),
+                            ContentType='application/json')
+              print(f"Collected COMPLETED: {key} | {minutes}min | resolved={record['resolved']}")
+              return {'statusCode': 200, 'key': key, 'status': status}
+
+  CollectorInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref CollectorFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 2
+      DestinationConfig:
+        OnFailure: {Destination: !GetAtt FailedEventsQueue.Arn}
+
+  InvestigationEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: devops-agent-investigation-events
+      Description: DevOps Agent investigation completed, failed, or timed out
+      EventPattern:
+        source: [aws.aidevops]
+        detail-type: ["Investigation Completed", "Investigation Failed", "Investigation Timed Out"]
+      State: ENABLED
+      Targets:
+        - Id: InvestigationCollector
+          Arn: !GetAtt CollectorFunction.Arn
+          DeadLetterConfig: {Arn: !GetAtt FailedEventsQueue.Arn}
+
+  CollectorInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CollectorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt InvestigationEventRule.Arn
+
+  # ---------------------------------------------------------------------------
+  # Inventory collector: every 2 days, per Region. Lists Agent Spaces, writes
+  # current recommendations, removes those of deleted Agent Spaces, and writes
+  # the collector status record that drives the dashboard's Coverage table.
+  # ---------------------------------------------------------------------------
+  InventoryLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: /aws/lambda/devops-agent-inventory-collector
+      RetentionInDays: !Ref LogRetentionDays
+
+  InventoryFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: InventoryLogGroup
+    Metadata:
+      # python3.14 is GA on Amazon Linux 2023; cfn-lint's bundled runtime list lags (E3030 false positive).
+      # Verified: https://docs.aws.amazon.com/lambda/latest/dg/lambda-python.html
+      cfn-lint: { config: { ignore_checks: [E3030] } }
+    Properties:
+      FunctionName: devops-agent-inventory-collector
+      Description: Agent Space inventory, current recommendations, and collector status.
+      Runtime: python3.14
+      Handler: index.handler
+      Role: !GetAtt InventoryRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          COLLECTION_BUCKET: !Ref CollectionBucket
+          ACCOUNT_ID: !Ref AWS::AccountId
+          SOLUTION_VERSION: "1.0.0"
+          FAILED_EVENTS_QUEUE_URL: !Ref FailedEventsQueue
+      Code:
+        ZipFile: |
+          import json
+          import os
+          from datetime import datetime, timedelta, timezone
+
+          import boto3
+          from botocore.config import Config
+          from botocore.exceptions import ClientError
+
+          CFG = Config(retries={'total_max_attempts': 10, 'mode': 'adaptive'})
+          s3 = boto3.client('s3', config=CFG)
+          sqs = boto3.client('sqs', config=CFG)
+          agent = boto3.client('devops-agent', config=CFG)
+          BUCKET = os.environ['COLLECTION_BUCKET']
+          ACCOUNT_ID = os.environ['ACCOUNT_ID']
+          VERSION = os.environ['SOLUTION_VERSION']
+          QUEUE_URL = os.environ['FAILED_EVENTS_QUEUE_URL']
+          REGION = os.environ['AWS_REGION']
+          PART = f"account_id={ACCOUNT_ID}/region={REGION}"
+          STATUS_KEY = f"collector-status/{PART}/status.json"
+          REC_PREFIX = f"recommendations-v1/{PART}/"
+          INV_PREFIX = f"investigations-v2/{PART}/"
+          HEALTH_WINDOW_DAYS = 8
+          HEALTH_MAX_OBJECTS = 200
+
+
+          def resolve_workload_name(info):
+              tag = ((info.get('tags') or {}).get('workload') or '').strip()
+              if tag:
+                  return tag
+              return ((info.get('agentSpace') or {}).get('name') or '').strip() or 'unknown'
+
+
+          def list_agent_spaces():
+              spaces, token = [], None
+              while True:
+                  resp = agent.list_agent_spaces(**({'nextToken': token} if token else {}))
+                  spaces.extend(resp.get('agentSpaces', []))
+                  token = resp.get('nextToken')
+                  if not token:
+                      return spaces
+
+
+          def current_recommendations(agent_space_id):
+              # Only the latest successful evaluation, so the set matches the console.
+              recs = []
+              for goal in agent.list_goals(agentSpaceId=agent_space_id).get('goals', []):
+                  task_id = goal.get('lastSuccessfulTaskId')
+                  token = None
+                  while task_id:
+                      params = {'agentSpaceId': agent_space_id, 'taskId': task_id, 'limit': 100}
+                      if token:
+                          params['nextToken'] = token
+                      resp = agent.list_recommendations(**params)
+                      recs.extend(resp.get('recommendations', []))
+                      token = resp.get('nextToken')
+                      if not token:
+                          break
+              return recs
+
+
+          def write_recommendations(agent_space_id, workload, recs, now):
+              base = {'accountId': ACCOUNT_ID, 'agentSpaceRegion': REGION,
+                      'agentSpaceId': agent_space_id, 'workloadName': workload, 'collected_at': now}
+              rows = [dict(base, recommendationId=r['recommendationId'], title=r['title'],
+                           status=r['status'], priority=r['priority'], taskId=r['taskId']) for r in recs]
+              if not rows:   # placeholder keeps the Agent Space visible; filtered out by the dataset
+                  rows = [dict(base, recommendationId='none', title='No recommendations exist',
+                               status='N/A', priority='N/A', taskId='none')]
+              key = f"{REC_PREFIX}agentspace_id={agent_space_id}/current.json"
+              s3.put_object(Bucket=BUCKET, Key=key, Body='\n'.join(json.dumps(r) for r in rows).encode())
+
+
+          def remove_deleted_agent_spaces(live_ids):
+              # Called only after a complete, successful ListAgentSpaces.
+              removed = 0
+              for page in s3.get_paginator('list_objects_v2').paginate(Bucket=BUCKET, Prefix=REC_PREFIX):
+                  for obj in page.get('Contents', []):
+                      space = obj['Key'][len(REC_PREFIX):].split('/')[0].removeprefix('agentspace_id=')
+                      if space not in live_ids:
+                          s3.delete_object(Bucket=BUCKET, Key=obj['Key'])   # delete marker replicates
+                          removed += 1
+              return removed
+
+
+          def replication_failures():
+              # Objects whose replication FAILED: the previous status record plus
+              # investigations written in the last HEALTH_WINDOW_DAYS days.
+              keys = [STATUS_KEY]
+              since = datetime.now(timezone.utc) - timedelta(days=HEALTH_WINDOW_DAYS)
+              for page in s3.get_paginator('list_objects_v2').paginate(Bucket=BUCKET, Prefix=INV_PREFIX):
+                  keys += [o['Key'] for o in page.get('Contents', []) if o['LastModified'] >= since]
+              failed = 0
+              for key in keys[:HEALTH_MAX_OBJECTS]:
+                  try:
+                      head = s3.head_object(Bucket=BUCKET, Key=key)
+                  except ClientError:
+                      continue   # e.g. no previous status record yet
+                  failed += head.get('ReplicationStatus') == 'FAILED'
+              return failed
+
+
+          def pending_failed_events():
+              attrs = sqs.get_queue_attributes(QueueUrl=QUEUE_URL, AttributeNames=['ApproximateNumberOfMessages'])
+              return int(attrs['Attributes']['ApproximateNumberOfMessages'])
+
+
+          def handler(event, context):
+              now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+              errors, spaces, rec_count, removed = [], None, 0, 0
+              try:
+                  spaces = list_agent_spaces()
+              except Exception as e:
+                  errors.append(f"ListAgentSpaces: {e}")
+              for space in spaces or []:
+                  space_id = space['agentSpaceId']
+                  try:
+                      workload = resolve_workload_name(agent.get_agent_space(agentSpaceId=space_id))
+                      recs = current_recommendations(space_id)
+                      write_recommendations(space_id, workload, recs, now)
+                      rec_count += len(recs)
+                  except Exception as e:
+                      errors.append(f"{space_id}: {e}")
+              if spaces is not None:
+                  try:
+                      removed = remove_deleted_agent_spaces({s['agentSpaceId'] for s in spaces})
+                  except Exception as e:
+                      errors.append(f"cleanup: {e}")
+              health = {}
+              for name, probe in (('replicationFailures', replication_failures),
+                                  ('failedEventsPending', pending_failed_events)):
+                  try:
+                      health[name] = probe()
+                  except Exception as e:
+                      health[name] = None
+                      errors.append(f"{name}: {e}")
+
+              status = 'ERROR' if errors else ('ACTIVE' if spaces else 'NO_AGENT_SPACES')
+              record = {
+                  'accountId': ACCOUNT_ID, 'agentSpaceRegion': REGION, 'status': status,
+                  'agentSpaceCount': len(spaces) if spaces is not None else None,
+                  'recommendationCount': rec_count, 'removedAgentSpaces': removed,
+                  'lastRunAt': now, 'collectorVersion': VERSION,
+                  'errorMessage': '; '.join(errors)[:1000], **health,
+              }
+              s3.put_object(Bucket=BUCKET, Key=STATUS_KEY, Body=json.dumps(record), ContentType='application/json')
+              print(json.dumps(record))
+              if errors:   # status is written first; raising lets Lambda retry, then the queue keeps it
+                  raise RuntimeError(record['errorMessage'])
+              return record
+
+  InventoryInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref InventoryFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 2
+      DestinationConfig:
+        OnFailure: {Destination: !GetAtt FailedEventsQueue.Arn}
+
+  InventoryScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: devops-agent-inventory-schedule
+      Description: Agent Space inventory, recommendations, and collector status
+      ScheduleExpression: "rate(2 days)"
+      State: ENABLED
+      Targets:
+        - Id: InventoryCollector
+          Arn: !GetAtt InventoryFunction.Arn
+          DeadLetterConfig: {Arn: !GetAtt FailedEventsQueue.Arn}
+
+  InventoryInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InventoryFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt InventoryScheduleRule.Arn
+
+Outputs:
+  CollectionBucketName:
+    Value: !Ref CollectionBucket
+  CollectionRegion:
+    Description: Recorded as the Agent Space Region on every record this stack writes.
+    Value: !Ref AWS::Region
+  InvestigationCollectorArn:
+    Value: !GetAtt CollectorFunction.Arn
+  InventoryCollectorArn:
+    Value: !GetAtt InventoryFunction.Arn
+  FailedEventsQueueUrl:
+    Value: !Ref FailedEventsQueue
