@@ -370,7 +370,7 @@ The dashboard stack declares three tables with fixed schemas: `investigations_v2
 - **The dashboard can be created before any data exists.** A crawler cannot infer a schema from an empty bucket; declared tables exist from the first deployment.
 - **The schema is a contract.** A new record field appears in Athena only after it is added to the table definition, so column types never change unexpectedly.
 - **No partitions, so no partition registration.** Athena reads every object under a table's `LOCATION` ([Specify a table location](https://docs.aws.amazon.com/athena/latest/ug/tables-location-format.html)), and the account and Region are fields in every record. Records from a new account, Region, or Agent Space are queryable as soon as they replicate, with no crawler run and no partition to add. The `account_id=/region=/agentspace_id=` folders in the key keep objects organized and make the primary key readable; they are not table partitions.
-- **Trade-off:** every query reads every record. At DevOps Agent volumes — a few KB per investigation — that is fast and costs a fraction of a cent. A fleet with hundreds of thousands of investigations would benefit from partitioning or SPICE; this is listed in the README's Next Steps.
+- **Trade-off:** every query reads every record. At DevOps Agent volumes — a few KB per investigation — that is fast and costs a fraction of a cent. A fleet with hundreds of thousands of investigations would benefit from partitioning or SPICE.
 
 Do not name a record field `region` or any other name used as a key folder. If tables are ever partitioned by those folders, a data column with the same name as a partition column makes Athena reject the table ([duplicate columns](https://repost.aws/knowledge-center/athena-hive-invalid-metadata-duplicate)). This is why the field is `agentSpaceRegion`, and the datasets expose it as `region`.
 
@@ -557,7 +557,7 @@ Investigation records hold investigation **metadata** and agent-written **narrat
 
 - **`rootCauseDescription` is free-form agent narrative** and can be long. It describes your infrastructure and what was misconfigured. Treat it like an incident write-up.
 - **`relatedResources` are the agent's own labels, not ARNs** (for example, `Workload Table`). They are meaningful only within the workload that produced them.
-- **Every dashboard reader sees every account's data.** To limit readers to their own workloads, see the README's [Next Steps](../README.md#next-steps).
+- **Every dashboard reader sees every account's data.** Reader-level row security by account or workload is not configured.
 
 Full detail: [Permissions Model](#permissions-model).
 

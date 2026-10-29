@@ -21,9 +21,8 @@ AWS DevOps Agent became [generally available on March 31, 2026](https://aws.amaz
 7. [Security](#security)
 8. [Cleanup](#cleanup)
 9. [Operating the solution →](#operating-the-solution) (validation, day-2 ops, troubleshooting, FAQ — in the Implementation Guide)
-10. [Next Steps](#next-steps)
-11. [Revisions](#revisions)
-12. [Notices](#notices)
+10. [Revisions](#revisions)
+11. [Notices](#notices)
 
 ## What you get
 
@@ -298,7 +297,7 @@ It replays each finished investigation through the collector, then refreshes the
 - **Non-public buckets.** The dashboard bucket policy allows replication only from your organization (`aws:PrincipalOrgID`) or listed accounts; all four Block Public Access settings are on for every bucket.
 - **Encryption and bounded retention.** SSE-S3 with Bucket Keys on all buckets, SQS-managed encryption on the queue, TLS enforced by policy; log, staging, dashboard, Athena-results, and queue retentions are all capped.
 
-Investigation records hold investigation **metadata** and agent-written **narrative text** (symptom titles, root-cause title/description, gaps, resource labels) — not application payloads, log contents, or metric data. Note `rootCauseDescription` is free-form agent narrative describing your infrastructure (treat it like an incident write-up), and **every dashboard reader sees every account's data** (see [Next Steps](#next-steps) to limit this). Full detail: [permissions model](docs/implementation-guide.md#permissions-model) and [what the records contain](docs/implementation-guide.md#what-the-collected-records-contain).
+Investigation records hold investigation **metadata** and agent-written **narrative text** (symptom titles, root-cause title/description, gaps, resource labels) — not application payloads, log contents, or metric data. Note `rootCauseDescription` is free-form agent narrative describing your infrastructure (treat it like an incident write-up), and **every dashboard reader sees every account's data** (reader-level row security is not configured). Full detail: [permissions model](docs/implementation-guide.md#permissions-model) and [what the records contain](docs/implementation-guide.md#what-the-collected-records-contain).
 
 ## Cleanup
 
@@ -315,17 +314,6 @@ Day-2 material lives in the **[Implementation Guide](docs/implementation-guide.m
 - **[Failures and Recovery](docs/implementation-guide.md#failures-and-recovery)** — every failure the Coverage table surfaces, and how to fix it.
 - **[Troubleshooting](docs/implementation-guide.md#troubleshooting)** and **[FAQ](docs/implementation-guide.md#faq)**.
 - **Internals** — [permissions model](docs/implementation-guide.md#permissions-model), [data model](docs/implementation-guide.md#data-model), [collection](docs/implementation-guide.md#investigation-collection), [multi-Region design](docs/implementation-guide.md#multi-region-design), and [QuickSight datasets](docs/implementation-guide.md#quicksight-datasets).
-
-## Next Steps
-
-Known limitations and planned work:
-
-- **Customer managed KMS keys.** Buckets use SSE-S3. SSE-KMS with cross-account replication needs key-policy grants for each source account's replication role; not yet supported.
-- **IAM permissions boundaries.** The templates do not attach a permissions boundary to their roles. Organizations whose service control policies require one must add it.
-- **Reader-level data separation.** Every dashboard reader sees every account. QuickSight row-level security by account or workload is not configured.
-- **Account usage.** The DevOps Agent `GetAccountUsage` API reports monthly agent-hours per account. Not yet collected.
-- **Recommendation category** (for example `MONITORING_AND_OBSERVABILITY`). Available only inside a large, variable JSON field; not yet extracted.
-- **Very large fleets.** Tables are unpartitioned, so every query reads every record. That is fast and cheap at the volumes DevOps Agent produces, but a fleet with hundreds of thousands of investigations would benefit from partitioning or SPICE.
 
 ## Revisions
 
